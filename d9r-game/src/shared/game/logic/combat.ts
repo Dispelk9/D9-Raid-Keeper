@@ -1,5 +1,5 @@
 import { STARTER_PARTY, getHeroTemplate } from '../data/heroes';
-import { RAID_BOSS_TEMPLATE } from '../data/raidBosses';
+import { RAID_BOSS_TEMPLATE, getBossAppearance } from '../data/raidBosses';
 import {
   getHeroProgress,
   getPartyPower,
@@ -62,6 +62,8 @@ const buildBattleHero = (
     title: template.title,
     role: template.role,
     rarity: template.rarity,
+    icon: template.icon,
+    spriteFrame: template.spriteFrame,
     level: progress.level,
     maxHp: stats.hp,
     hp: stats.hp,
@@ -71,6 +73,7 @@ const buildBattleHero = (
     res: stats.res,
     spd: stats.spd,
     charge: 0,
+    skillCooldown: 0,
     skill: template.skill,
     ultimate: template.ultimate,
   };
@@ -78,17 +81,23 @@ const buildBattleHero = (
 
 const createRaidBoss = (save: PlayerSave): RaidBoss => {
   const powerBonus = Math.max(0, Math.round(getPartyPower(save) * 0.38));
+  const raidLevel = Math.max(1, save.raidLevel);
+  const levelMultiplier = 1 + (raidLevel - 1) * 0.16;
+  const maxHp = Math.round((RAID_BOSS_TEMPLATE.hp + powerBonus) * levelMultiplier);
+  const appearance = getBossAppearance(raidLevel);
 
   return {
-    id: RAID_BOSS_TEMPLATE.id,
-    name: RAID_BOSS_TEMPLATE.name,
-    title: RAID_BOSS_TEMPLATE.title,
-    maxHp: RAID_BOSS_TEMPLATE.hp + powerBonus,
-    hp: RAID_BOSS_TEMPLATE.hp + powerBonus,
-    atk: RAID_BOSS_TEMPLATE.atk,
-    def: RAID_BOSS_TEMPLATE.def,
-    mag: RAID_BOSS_TEMPLATE.mag,
-    res: RAID_BOSS_TEMPLATE.res,
+    id: `${RAID_BOSS_TEMPLATE.id}-lv${raidLevel}`,
+    name: appearance.name,
+    title: `${appearance.title} · Lv ${raidLevel}`,
+    icon: appearance.icon,
+    spriteKey: appearance.spriteKey,
+    maxHp,
+    hp: maxHp,
+    atk: Math.round(RAID_BOSS_TEMPLATE.atk * levelMultiplier),
+    def: Math.round(RAID_BOSS_TEMPLATE.def * (1 + (raidLevel - 1) * 0.09)),
+    mag: Math.round(RAID_BOSS_TEMPLATE.mag * levelMultiplier),
+    res: Math.round(RAID_BOSS_TEMPLATE.res * (1 + (raidLevel - 1) * 0.09)),
     spd: RAID_BOSS_TEMPLATE.spd,
     countdown: RAID_BOSS_TEMPLATE.countdown,
   };
@@ -384,13 +393,27 @@ export const resolveHeroAction = (
     };
   }
 
-  const skill = getActionSkill(actor, action);
+  // Enforce skill cooldown — fall back to basic attack if on cooldown
+  const effectiveAction: BattleAction =
+    action === 'skill' && actor.skillCooldown > 0 ? 'attack' : action;
+  const newCooldown =
+    effectiveAction === 'skill' ? 3 : Math.max(0, actor.skillCooldown - 1);
+
+  const skill = getActionSkill(actor, effectiveAction);
   const afterHero =
     skill.kind === 'heal'
-      ? resolveHeal(state, actor, skill, action)
-      : resolveHeroStrike(state, actor, skill, action);
+      ? resolveHeal(state, actor, skill, effectiveAction)
+      : resolveHeroStrike(state, actor, skill, effectiveAction);
 
-  return resolveBossTurn(afterHero);
+  // Apply cooldown update to the actor in the resulting state
+  const afterCooldown = {
+    ...afterHero,
+    heroes: afterHero.heroes.map((hero) =>
+      hero.id === actor.id ? { ...hero, skillCooldown: newCooldown } : hero
+    ),
+  };
+
+  return resolveBossTurn(afterCooldown);
 };
 
 export const getActiveHero = (state: BattleState) =>
@@ -401,3 +424,6 @@ export const getBossHpPercent = (boss: RaidBoss) =>
 
 export const canUseUltimate = (hero: BattleHero | null) =>
   hero ? hero.charge >= ULTIMATE_CHARGE && hero.hp > 0 : false;
+
+export const canUseSkill = (hero: BattleHero | null) =>
+  hero ? hero.skillCooldown === 0 && hero.hp > 0 : false;

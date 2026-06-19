@@ -38,6 +38,8 @@ export type HeroTemplate = {
   title: string;
   role: HeroRole;
   rarity: HeroRarity;
+  icon: string;
+  spriteFrame: number;
   stats: StatBlock;
   skill: HeroSkill;
   ultimate: HeroSkill;
@@ -68,6 +70,7 @@ export type PlayerSave = {
   heroes: HeroProgress[];
   party: string[];
   inventory: EquipmentItem[];
+  raidLevel: number;
   totalRaidDamage: number;
   bestRaidDamage: number;
   dailyClaimedAt: string | null;
@@ -89,6 +92,8 @@ export type BattleHero = {
   title: string;
   role: HeroRole;
   rarity: HeroRarity;
+  icon: string;
+  spriteFrame: number;
   level: number;
   maxHp: number;
   hp: number;
@@ -98,6 +103,7 @@ export type BattleHero = {
   res: number;
   spd: number;
   charge: number;
+  skillCooldown: number;
   skill: HeroSkill;
   ultimate: HeroSkill;
 };
@@ -106,6 +112,8 @@ export type RaidBoss = {
   id: string;
   name: string;
   title: string;
+  icon: string;
+  spriteKey: string;
   maxHp: number;
   hp: number;
   atk: number;

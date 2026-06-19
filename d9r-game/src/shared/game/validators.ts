@@ -30,6 +30,7 @@ export const isPlayerSave = (value: unknown): value is PlayerSave => {
     value.heroes.every(isHeroProgress) &&
     isStringArray(value.party) &&
     Array.isArray(value.inventory) &&
+    typeof value.raidLevel === 'number' &&
     typeof value.totalRaidDamage === 'number' &&
     typeof value.bestRaidDamage === 'number' &&
     (typeof value.dailyClaimedAt === 'string' || value.dailyClaimedAt === null) &&

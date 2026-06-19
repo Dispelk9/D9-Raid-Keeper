@@ -1,8 +1,11 @@
-# Reddit Raid Keeper
+# D9 Raid Keeper
 
-Reddit Raid Keeper is a Devvit web RPG for the Reddit hackathon. Build a five-hero party, fight the community raid boss **Reddit Snoo Prime**, collect loot, and upgrade your roster between runs.
+D9 Raid Keeper is a Devvit web RPG for the Reddit hackathon. Build a five-hero party, fight the community raid boss **Reddit Snoo Prime**, collect loot, and upgrade your roster between runs.
 
 The game runs inside Reddit using React, Vite, Tailwind CSS, Hono, Devvit Redis, and Reddit user identity.
+
+# Link to play
+https://www.reddit.com/r/d9r_game_dev/
 
 ## How To Play
 
@@ -23,7 +26,7 @@ The game runs inside Reddit using React, Vite, Tailwind CSS, Hono, Devvit Redis,
 - **Stats**: HP, ATK, DEF, MAG, RES, and SPD.
 - **Turn Order**: Higher SPD heroes act earlier.
 - **Skills**: Each hero has a normal skill and a charged ultimate.
-- **Boss**: Reddit Snoo Prime has HP, defenses, regular attacks, and a countdown special.
+- **Boss**: Reddit Snoo Prime has HP, defenses, regular attacks, a countdown special, and grows stronger after every raid.
 - **Progression**: Earn gold, gems, energy, raid tokens, EXP, and equipment.
 - **Persistence**: Progress saves through `/api/keeper` with Devvit Redis and local fallback.
 
@@ -31,6 +34,7 @@ The game runs inside Reddit using React, Vite, Tailwind CSS, Hono, Devvit Redis,
 
 - Feed splash entrypoint for Reddit inline view
 - Expanded game entrypoint with raid combat
+- Portrait-first FFRK-style battle scene with boss sprite on the left and five hero sprites on the right
 - Playable five-hero party
 - Battle log, victory state, defeat state, and reward summary
 - Hero upgrades and EXP leveling
@@ -71,4 +75,3 @@ npx devvit upload
 - `src/shared/game/data/`: Hero, equipment, and boss templates
 - `src/shared/game/logic/`: Combat and progression rules
 - `src/shared/game/validators.ts`: Save-data validation
-

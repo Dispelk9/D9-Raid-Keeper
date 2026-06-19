@@ -7,6 +7,8 @@ export const HEROES: HeroTemplate[] = [
     title: 'Front Tank',
     role: 'Tank',
     rarity: 'Rare',
+    icon: '🛡️',
+    spriteFrame: 0,
     stats: { hp: 188, atk: 22, def: 31, mag: 10, res: 22, spd: 14 },
     skill: {
       id: 'shield-bash',
@@ -29,6 +31,8 @@ export const HEROES: HeroTemplate[] = [
     title: 'Damage Dealer',
     role: 'Warrior',
     rarity: 'Epic',
+    icon: '⚔️',
+    spriteFrame: 4,
     stats: { hp: 148, atk: 36, def: 19, mag: 12, res: 15, spd: 24 },
     skill: {
       id: 'double-slash',
@@ -51,6 +55,8 @@ export const HEROES: HeroTemplate[] = [
     title: 'Damage Dealer',
     role: 'Mage',
     rarity: 'Epic',
+    icon: '🔮',
+    spriteFrame: 12,
     stats: { hp: 118, atk: 12, def: 13, mag: 42, res: 27, spd: 18 },
     skill: {
       id: 'flame-thread',
@@ -73,6 +79,8 @@ export const HEROES: HeroTemplate[] = [
     title: 'Damage Dealer',
     role: 'Ranger',
     rarity: 'Rare',
+    icon: '🏹',
+    spriteFrame: 14,
     stats: { hp: 132, atk: 29, def: 16, mag: 16, res: 16, spd: 34 },
     skill: {
       id: 'focus-shot',
@@ -95,6 +103,8 @@ export const HEROES: HeroTemplate[] = [
     title: 'Healer',
     role: 'Healer',
     rarity: 'Epic',
+    icon: '💊',
+    spriteFrame: 11,
     stats: { hp: 126, atk: 10, def: 14, mag: 34, res: 34, spd: 20 },
     skill: {
       id: 'golden-heal',
@@ -117,6 +127,8 @@ export const HEROES: HeroTemplate[] = [
     title: 'Support',
     role: 'Support',
     rarity: 'Legendary',
+    icon: '🤖',
+    spriteFrame: 17,
     stats: { hp: 138, atk: 16, def: 20, mag: 29, res: 32, spd: 26 },
     skill: {
       id: 'protect-protocol',
