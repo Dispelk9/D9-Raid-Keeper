@@ -1,0 +1,15 @@
+node_modules
+.DS_Store
+dist
+.env
+
+# Local AI/tooling workspace files
+.agents/
+.codex/
+.claude/
+.cursor/
+
+# Editor and OS files
+Thumbs.db
+.idea/
+.vscode/

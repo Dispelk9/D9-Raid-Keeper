@@ -1,0 +1,26 @@
+@import 'tailwindcss';
+
+html,
+body {
+  min-height: 100%;
+  overscroll-behavior: none;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.raid-field {
+  background:
+    radial-gradient(circle at 16% 22%, rgb(255 255 255 / 0.8) 0 9px, transparent 10px),
+    radial-gradient(circle at 84% 18%, rgb(249 115 22 / 0.2) 0 16px, transparent 17px),
+    radial-gradient(circle at 72% 76%, rgb(14 165 233 / 0.16) 0 18px, transparent 19px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.28) 1px, transparent 1px),
+    linear-gradient(0deg, rgb(255 255 255 / 0.22) 1px, transparent 1px);
+  background-size:
+    auto,
+    auto,
+    auto,
+    42px 42px,
+    42px 42px;
+}
