@@ -13,6 +13,12 @@ const DAILY_GEMS = 30;
 const DAILY_ENERGY = 35;
 const LEVEL_CAP = 50;
 
+export const DAILY_REWARD = {
+  gold: DAILY_GOLD,
+  gems: DAILY_GEMS,
+  energy: DAILY_ENERGY,
+} as const;
+
 export const createInitialPlayerSave = (username: string): PlayerSave => ({
   version: 1,
   username,
@@ -72,7 +78,9 @@ export const getLevelExpRequirement = (level: number) => 80 + level * 30;
 export const canUpgradeHero = (save: PlayerSave, heroId: string) => {
   const progress = getHeroProgress(save, heroId);
 
-  return progress.level < LEVEL_CAP && save.gold >= getUpgradeCost(progress.level);
+  return (
+    progress.level < LEVEL_CAP && save.gold >= getUpgradeCost(progress.level)
+  );
 };
 
 export const upgradeHero = (save: PlayerSave, heroId: string) => {
@@ -198,5 +206,7 @@ export const getPartyPower = (save: PlayerSave) =>
     const progress = getHeroProgress(save, heroId);
     const stats = getScaledStats(template, progress.level);
 
-    return total + stats.hp * 0.08 + stats.atk + stats.def + stats.mag + stats.res;
+    return (
+      total + stats.hp * 0.08 + stats.atk + stats.def + stats.mag + stats.res
+    );
   }, 0);

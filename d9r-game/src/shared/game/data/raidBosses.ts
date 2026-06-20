@@ -1,3 +1,5 @@
+import type { BossSpecialSkill } from '../types';
+
 type BossAppearance = {
   name: string;
   title: string;
@@ -21,25 +23,72 @@ export const getBossAppearance = (raidLevel: number): BossAppearance => {
 
 // All boss texture keys → sprite file mapping (used in BootScene to preload)
 export const BOSS_SPRITE_MAP: Record<string, string> = {
-  'boss-goo':        'assets/sprites/Bosses/World01_001_GreenGoo.png',
-  'boss-bird':       'assets/sprites/Bosses/World01_003_Bird.png',
-  'boss-salamander': 'assets/sprites/Bosses/World01_002_Salamander.png',
-  'boss-shello':     'assets/sprites/Bosses/World01_005_Shello.png',
-  'boss-pirate':     'assets/sprites/Bosses/World01_007_Pirate.png',
-  'boss-witch':      'assets/sprites/Bosses/World01_006_Witch.png',
-  'boss-prince':     'assets/sprites/Bosses/World01_004_WailingPrince.png',
-  'boss-drone':      'assets/sprites/Bosses/World04_001_ LaserDrone.png',
-  'boss-scout':      'assets/sprites/Bosses/World04_002_ ScoutMachine.png',
-  'boss-outlaw':     'assets/sprites/Bosses/World04_003_ Outlaw.png',
+  'boss-goo':        'assets/sprites/bosses/World01_001_GreenGoo.png',
+  'boss-bird':       'assets/sprites/bosses/World01_003_Bird.png',
+  'boss-salamander': 'assets/sprites/bosses/World01_002_Salamander.png',
+  'boss-shello':     'assets/sprites/bosses/World01_005_Shello.png',
+  'boss-pirate':     'assets/sprites/bosses/World01_007_Pirate.png',
+  'boss-witch':      'assets/sprites/bosses/World01_006_Witch.png',
+  'boss-prince':     'assets/sprites/bosses/World01_004_WailingPrince.png',
+  'boss-drone':      'assets/sprites/bosses/World04_001_ LaserDrone.png',
+  'boss-scout':      'assets/sprites/bosses/World04_002_ ScoutMachine.png',
+  'boss-outlaw':     'assets/sprites/bosses/World04_003_ Outlaw.png',
+};
+
+// Elite bosses appear every 5 levels starting at level 5
+export const isEliteBoss = (raidLevel: number): boolean =>
+  raidLevel >= 5 && raidLevel % 5 === 0;
+
+const ELITE_SKILLS: BossSpecialSkill[] = [
+  {
+    name: 'Blinding Flash',
+    icon: '👁️',
+    effectType: 'blind',
+    target: 'party',
+    duration: 3,
+  },
+  {
+    name: 'Mind Warp',
+    icon: '🌀',
+    effectType: 'confuse',
+    target: 'single',
+    duration: 2,
+  },
+  {
+    name: 'Blood Rage',
+    icon: '🔴',
+    effectType: 'berserk',
+    target: 'single',
+    duration: 2,
+  },
+  {
+    name: 'Void Silence',
+    icon: '🔇',
+    effectType: 'silence',
+    target: 'party',
+    duration: 2,
+  },
+  {
+    name: 'Concussion',
+    icon: '💫',
+    effectType: 'daze',
+    target: 'single',
+    duration: 1,
+  },
+];
+
+export const getEliteSkill = (raidLevel: number): BossSpecialSkill => {
+  const idx = (Math.floor(raidLevel / 5) - 1) % ELITE_SKILLS.length;
+  return ELITE_SKILLS[idx] ?? ELITE_SKILLS[0]!;
 };
 
 export const RAID_BOSS_TEMPLATE = {
   id: 'raid-boss',
-  hp: 760,
-  atk: 34,
-  def: 19,
-  mag: 28,
-  res: 18,
+  hp: 520,
+  atk: 26,
+  def: 14,
+  mag: 22,
+  res: 14,
   spd: 18,
   countdown: 4,
 };

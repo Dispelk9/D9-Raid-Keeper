@@ -14,7 +14,7 @@ export const Splash = () => {
               u/{context.username ?? 'keeper'}
             </p>
             <h1 className="mt-1 text-3xl font-black leading-none text-zinc-950">
-              Reddit Raid Keeper
+              D9 Raid Keeper
             </h1>
             <p className="mt-3 max-w-[14rem] text-sm font-semibold text-zinc-700">
               Build a party, break the raid boss, claim the loot.

@@ -6,12 +6,7 @@ export type HeroRole =
   | 'Support'
   | 'Healer';
 
-export type HeroRarity =
-  | 'Common'
-  | 'Rare'
-  | 'Epic'
-  | 'Legendary'
-  | 'Mythic';
+export type HeroRarity = 'Common' | 'Rare' | 'Epic' | 'Legendary' | 'Mythic';
 
 export type EquipmentSlot = 'Weapon' | 'Armor' | 'Accessory';
 
@@ -30,6 +25,44 @@ export type HeroSkill = {
   summary: string;
   power: number;
   kind: 'strike' | 'spell' | 'heal' | 'rally';
+  accuracyBonus?: number;
+  critBonus?: number;
+  effect?: {
+    target: 'boss' | 'party' | 'self';
+    accuracyModifier?: number;
+    evasionModifier?: number;
+    duration: number;
+  };
+};
+
+export type HeroSkillUnlock = {
+  level: number;
+  skill: HeroSkill;
+};
+
+export type BossSpecialEffectType =
+  | 'confuse'
+  | 'blind'
+  | 'berserk'
+  | 'silence'
+  | 'daze';
+
+export type BossSpecialSkill = {
+  name: string;
+  icon: string;
+  effectType: BossSpecialEffectType;
+  target: 'single' | 'party';
+  duration: number;
+};
+
+export type BattleStatusEffect = {
+  id: string;
+  name: string;
+  effectType?: BossSpecialEffectType;
+  accuracyModifier?: number;
+  evasionModifier?: number;
+  atkModifier?: number;
+  duration: number;
 };
 
 export type HeroTemplate = {
@@ -42,6 +75,7 @@ export type HeroTemplate = {
   spriteFrame: number;
   stats: StatBlock;
   skill: HeroSkill;
+  skillUnlocks?: HeroSkillUnlock[];
   ultimate: HeroSkill;
 };
 
@@ -106,6 +140,7 @@ export type BattleHero = {
   skillCooldown: number;
   skill: HeroSkill;
   ultimate: HeroSkill;
+  statusEffects: BattleStatusEffect[];
 };
 
 export type RaidBoss = {
@@ -122,6 +157,9 @@ export type RaidBoss = {
   res: number;
   spd: number;
   countdown: number;
+  statusEffects: BattleStatusEffect[];
+  isElite?: boolean;
+  specialSkill?: BossSpecialSkill;
 };
 
 export type BattleLogEntry = {

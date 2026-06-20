@@ -1,22 +1,35 @@
-import { STARTER_PARTY, getHeroTemplate } from '../data/heroes';
-import { RAID_BOSS_TEMPLATE, getBossAppearance } from '../data/raidBosses';
 import {
-  getHeroProgress,
-  getPartyPower,
-  getScaledStats,
-} from './progression';
+  STARTER_PARTY,
+  getHeroSkillForLevel,
+  getHeroTemplate,
+} from '../data/heroes';
+import {
+  RAID_BOSS_TEMPLATE,
+  getBossAppearance,
+  isEliteBoss,
+  getEliteSkill,
+} from '../data/raidBosses';
+import { getHeroProgress, getPartyPower, getScaledStats } from './progression';
 import type {
   BattleAction,
   BattleHero,
   BattleLogEntry,
+  BattleStatusEffect,
   BattleState,
   HeroSkill,
   PlayerSave,
   RaidBoss,
 } from '../types';
 
-const MAX_LOGS = 7;
+export const MAX_LOGS = 7;
 const ULTIMATE_CHARGE = 100;
+const BASE_MISS_CHANCE = 0.07;
+const MIN_MISS_CHANCE = 0.03;
+const MAX_MISS_CHANCE = 0.35;
+const MIN_CRIT_CHANCE = 0.04;
+const MAX_CRIT_CHANCE = 0.3;
+
+type BattleCombatant = Pick<BattleHero | RaidBoss, 'spd' | 'statusEffects'>;
 
 const createLogEntry = (
   message: string,
@@ -40,9 +53,138 @@ const getDamage = (
   floor: number
 ) => {
   const variance = 0.92 + Math.random() * 0.16;
-  const rawDamage = attackerStat * power * variance - defenderStat * 0.38;
+  const rawDamage = attackerStat * power * variance - defenderStat * 0.22;
 
   return Math.max(floor, Math.round(rawDamage));
+};
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, value));
+
+const getEffectTotal = (
+  combatant: BattleCombatant,
+  key: 'accuracyModifier' | 'evasionModifier'
+) =>
+  combatant.statusEffects.reduce(
+    (total, effect) => total + (effect[key] ?? 0),
+    0
+  );
+
+const getMissChance = (
+  attacker: BattleCombatant,
+  defender: BattleCombatant,
+  skill: HeroSkill
+) => {
+  const speedGapPenalty = (defender.spd - attacker.spd) * 0.003;
+  const accuracy =
+    getEffectTotal(attacker, 'accuracyModifier') + (skill.accuracyBonus ?? 0);
+  const evasion = getEffectTotal(defender, 'evasionModifier');
+  const confusePenalty = attacker.statusEffects.some(
+    (e) => e.effectType === 'confuse'
+  )
+    ? 0.32
+    : 0;
+
+  return clamp(
+    BASE_MISS_CHANCE + speedGapPenalty - accuracy + evasion + confusePenalty,
+    MIN_MISS_CHANCE,
+    MAX_MISS_CHANCE
+  );
+};
+
+const getCritChance = (attacker: BattleCombatant, skill: HeroSkill) =>
+  clamp(
+    MIN_CRIT_CHANCE + attacker.spd * 0.0028 + (skill.critBonus ?? 0),
+    MIN_CRIT_CHANCE,
+    MAX_CRIT_CHANCE
+  );
+
+const createStatusEffect = (skill: HeroSkill): BattleStatusEffect | null => {
+  if (!skill.effect) return null;
+
+  const statusEffect: BattleStatusEffect = {
+    id: skill.id,
+    name: skill.name,
+    duration: skill.effect.duration,
+  };
+
+  if (typeof skill.effect.accuracyModifier === 'number') {
+    statusEffect.accuracyModifier = skill.effect.accuracyModifier;
+  }
+
+  if (typeof skill.effect.evasionModifier === 'number') {
+    statusEffect.evasionModifier = skill.effect.evasionModifier;
+  }
+
+  return statusEffect;
+};
+
+const addStatusEffect = (
+  effects: BattleStatusEffect[],
+  nextEffect: BattleStatusEffect
+) => [nextEffect, ...effects.filter((effect) => effect.id !== nextEffect.id)];
+
+const tickStatusEffects = (effects: BattleStatusEffect[]) =>
+  effects
+    .map((effect) => ({
+      ...effect,
+      duration: effect.duration - 1,
+    }))
+    .filter((effect) => effect.duration > 0);
+
+const tickBattleEffects = (state: BattleState): BattleState => ({
+  ...state,
+  heroes: state.heroes.map((hero) => ({
+    ...hero,
+    statusEffects: tickStatusEffects(hero.statusEffects),
+  })),
+  boss: {
+    ...state.boss,
+    statusEffects: tickStatusEffects(state.boss.statusEffects),
+  },
+});
+
+const applySkillEffect = (
+  skill: HeroSkill,
+  actor: BattleHero,
+  heroes: BattleHero[],
+  boss: RaidBoss,
+  targetEffectLanded: boolean
+) => {
+  const statusEffect = createStatusEffect(skill);
+  if (!statusEffect || !skill.effect) {
+    return {
+      heroes,
+      boss,
+    };
+  }
+
+  if (skill.effect.target === 'boss') {
+    return {
+      heroes,
+      boss: targetEffectLanded
+        ? {
+            ...boss,
+            statusEffects: addStatusEffect(boss.statusEffects, statusEffect),
+          }
+        : boss,
+    };
+  }
+
+  const shouldApplyToHero = (hero: BattleHero) =>
+    hero.hp > 0 && (skill.effect?.target === 'party' || hero.id === actor.id);
+
+  return {
+    boss,
+    heroes: heroes.map((hero) =>
+      shouldApplyToHero(hero)
+        ? {
+            ...hero,
+            statusEffects: addStatusEffect(hero.statusEffects, statusEffect),
+          }
+        : hero
+    ),
+  };
 };
 
 const buildBattleHero = (
@@ -74,16 +216,21 @@ const buildBattleHero = (
     spd: stats.spd,
     charge: 0,
     skillCooldown: 0,
-    skill: template.skill,
+    skill: getHeroSkillForLevel(template, progress.level),
     ultimate: template.ultimate,
+    statusEffects: [],
   };
 };
 
 const createRaidBoss = (save: PlayerSave): RaidBoss => {
   const powerBonus = Math.max(0, Math.round(getPartyPower(save) * 0.38));
   const raidLevel = Math.max(1, save.raidLevel);
-  const levelMultiplier = 1 + (raidLevel - 1) * 0.16;
-  const maxHp = Math.round((RAID_BOSS_TEMPLATE.hp + powerBonus) * levelMultiplier);
+  const levelMultiplier = 1 + (raidLevel - 1) * 0.1;
+  const elite = isEliteBoss(raidLevel);
+  const eliteMultiplier = elite ? 1.3 : 1;
+  const maxHp = Math.round(
+    (RAID_BOSS_TEMPLATE.hp + powerBonus) * levelMultiplier * eliteMultiplier
+  );
   const appearance = getBossAppearance(raidLevel);
 
   return {
@@ -94,12 +241,15 @@ const createRaidBoss = (save: PlayerSave): RaidBoss => {
     spriteKey: appearance.spriteKey,
     maxHp,
     hp: maxHp,
-    atk: Math.round(RAID_BOSS_TEMPLATE.atk * levelMultiplier),
-    def: Math.round(RAID_BOSS_TEMPLATE.def * (1 + (raidLevel - 1) * 0.09)),
-    mag: Math.round(RAID_BOSS_TEMPLATE.mag * levelMultiplier),
-    res: Math.round(RAID_BOSS_TEMPLATE.res * (1 + (raidLevel - 1) * 0.09)),
+    atk: Math.round(RAID_BOSS_TEMPLATE.atk * levelMultiplier * eliteMultiplier),
+    def: Math.round(RAID_BOSS_TEMPLATE.def * (1 + (raidLevel - 1) * 0.06)),
+    mag: Math.round(RAID_BOSS_TEMPLATE.mag * levelMultiplier * eliteMultiplier),
+    res: Math.round(RAID_BOSS_TEMPLATE.res * (1 + (raidLevel - 1) * 0.06)),
     spd: RAID_BOSS_TEMPLATE.spd,
     countdown: RAID_BOSS_TEMPLATE.countdown,
+    statusEffects: [],
+    isElite: elite,
+    specialSkill: elite ? getEliteSkill(raidLevel) : undefined,
   };
 };
 
@@ -155,9 +305,7 @@ const chargeHero = (
 ): BattleHero => ({
   ...hero,
   charge:
-    action === 'ultimate'
-      ? 0
-      : Math.min(ULTIMATE_CHARGE, hero.charge + amount),
+    action === 'ultimate' ? 0 : Math.min(ULTIMATE_CHARGE, hero.charge + amount),
 });
 
 const getActionSkill = (hero: BattleHero, action: BattleAction): HeroSkill => {
@@ -186,7 +334,7 @@ const resolveHeal = (
   const chargedActor = chargeHero(actor, action === 'attack' ? 20 : 32, action);
 
   if (action === 'ultimate') {
-    const heroes = state.heroes.map((hero) => {
+    const healedHeroes = state.heroes.map((hero) => {
       if (hero.hp <= 0) return hero;
 
       const nextHero = hero.id === actor.id ? chargedActor : hero;
@@ -196,10 +344,18 @@ const resolveHeal = (
         hp: Math.min(nextHero.maxHp, nextHero.hp + healAmount),
       };
     });
+    const { heroes, boss } = applySkillEffect(
+      skill,
+      actor,
+      healedHeroes,
+      state.boss,
+      true
+    );
 
     return {
       ...state,
       heroes,
+      boss,
       logs: addLog(
         state.logs,
         `${actor.name} used ${skill.name} and restored the party.`,
@@ -212,7 +368,7 @@ const resolveHeal = (
 
   if (!target) return state;
 
-  const heroes = state.heroes.map((hero) => {
+  const healedHeroes = state.heroes.map((hero) => {
     if (hero.id === actor.id) {
       const updatedActor =
         hero.id === target.id
@@ -232,10 +388,18 @@ const resolveHeal = (
       hp: Math.min(hero.maxHp, hero.hp + healAmount),
     };
   });
+  const { heroes, boss } = applySkillEffect(
+    skill,
+    actor,
+    healedHeroes,
+    state.boss,
+    true
+  );
 
   return {
     ...state,
     heroes,
+    boss,
     logs: addLog(
       state.logs,
       `${actor.name} used ${skill.name} on ${target.name}.`,
@@ -254,14 +418,23 @@ const resolveHeroStrike = (
   const supportBoost = skill.kind === 'rally' ? actor.res * 0.32 : 0;
   const speedBoost = actor.role === 'Ranger' ? actor.spd * 0.34 : 0;
   const guardBoost = actor.role === 'Tank' ? actor.def * 0.42 : 0;
-  const attackStat = isSpell
-    ? actor.mag + supportBoost
-    : actor.atk + speedBoost + guardBoost + supportBoost;
+  const berserkMult = actor.statusEffects
+    .filter((e) => e.effectType === 'berserk')
+    .reduce((m, e) => m * (e.atkModifier ?? 1), 1);
+  const attackStat =
+    (isSpell
+      ? actor.mag + supportBoost
+      : actor.atk + speedBoost + guardBoost + supportBoost) * berserkMult;
   const defenseStat = isSpell ? state.boss.res : state.boss.def;
-  const damage = getDamage(attackStat, defenseStat, skill.power, 9);
+  const missed = Math.random() < getMissChance(actor, state.boss, skill);
+  const critical = !missed && Math.random() < getCritChance(actor, skill);
+  const baseDamage = missed
+    ? 0
+    : getDamage(attackStat, defenseStat, skill.power, 9);
+  const damage = critical ? Math.round(baseDamage * 1.55) : baseDamage;
   const nextBossHp = Math.max(0, state.boss.hp - damage);
   const chargedActor = chargeHero(actor, action === 'attack' ? 24 : 34, action);
-  const heroes = state.heroes.map((hero) => {
+  const chargedHeroes = state.heroes.map((hero) => {
     if (hero.id === actor.id) return chargedActor;
 
     if (skill.kind === 'rally' && hero.hp > 0) {
@@ -273,23 +446,45 @@ const resolveHeroStrike = (
 
     return hero;
   });
+  const { heroes, boss } = applySkillEffect(
+    skill,
+    actor,
+    chargedHeroes,
+    {
+      ...state.boss,
+      hp: nextBossHp,
+    },
+    !missed
+  );
   const status = nextBossHp <= 0 ? 'won' : state.status;
+  const logMessage = missed
+    ? `${actor.name}'s ${skill.name} missed.`
+    : `${actor.name} used ${skill.name} for ${damage}${critical ? ' CRIT' : ''}.`;
 
   return {
     ...state,
     status,
     heroes,
-    boss: {
-      ...state.boss,
-      hp: nextBossHp,
-    },
+    boss,
     totalDamage: state.totalDamage + damage,
-    logs: addLog(
-      state.logs,
-      `${actor.name} used ${skill.name} for ${damage} damage.`,
-      status === 'won' ? 'reward' : 'hero'
-    ),
+    logs: addLog(state.logs, logMessage, status === 'won' ? 'reward' : 'hero'),
   };
+};
+
+const BOSS_ATTACK_SKILL: HeroSkill = {
+  id: 'boss-attack',
+  name: 'Attack',
+  summary: 'Boss attack',
+  power: 1.08,
+  kind: 'strike',
+};
+
+const BOSS_SPECIAL_SKILL: HeroSkill = {
+  id: 'thread-quake',
+  name: 'Thread Quake',
+  summary: 'Party-wide boss spell',
+  power: 1,
+  kind: 'spell',
 };
 
 const chooseBossTarget = (heroes: BattleHero[]) => {
@@ -300,25 +495,98 @@ const chooseBossTarget = (heroes: BattleHero[]) => {
   return getLowestAlly(heroes);
 };
 
+const resolveEliteBossSkill = (state: BattleState): BattleState => {
+  const skill = state.boss.specialSkill!;
+  const living = state.heroes.filter((h) => h.hp > 0);
+  if (living.length === 0) return { ...state, status: 'lost' };
+
+  const targets =
+    skill.target === 'party'
+      ? living
+      : [living[Math.floor(Math.random() * living.length)]].filter(Boolean);
+
+  const statusEffect = {
+    id: `boss-${skill.effectType}`,
+    name: skill.name,
+    effectType: skill.effectType,
+    duration: skill.duration,
+    ...(skill.effectType === 'blind' ? { accuracyModifier: -0.28 } : {}),
+    ...(skill.effectType === 'berserk' ? { atkModifier: 1.5 } : {}),
+  };
+
+  const heroes = state.heroes.map((hero) => {
+    if (!targets.some((t) => t?.id === hero.id)) return hero;
+    return {
+      ...hero,
+      statusEffects: addStatusEffect(hero.statusEffects, statusEffect),
+    };
+  });
+
+  const targetLabel =
+    skill.target === 'party'
+      ? 'the whole party'
+      : (targets[0]?.name ?? 'a hero');
+  const logMsg = `${state.boss.name} used ${skill.icon} ${skill.name} on ${targetLabel}!`;
+
+  const status = heroes.every((h) => h.hp <= 0) ? 'lost' : 'active';
+  const nextIndex = getNextLivingHeroIndex(heroes, state.activeHeroIndex);
+
+  return tickBattleEffects({
+    ...state,
+    status,
+    heroes,
+    boss: { ...state.boss, countdown: 4 },
+    activeHeroIndex: nextIndex < 0 ? state.activeHeroIndex : nextIndex,
+    round: nextIndex <= state.activeHeroIndex ? state.round + 1 : state.round,
+    logs: addLog(state.logs, logMsg, 'boss'),
+  });
+};
+
 const resolveBossTurn = (state: BattleState): BattleState => {
   if (state.status !== 'active') return state;
 
   const specialAttack = state.boss.countdown <= 1;
 
   if (specialAttack) {
+    if (state.boss.isElite && state.boss.specialSkill) {
+      return resolveEliteBossSkill(state);
+    }
+
     const damage = Math.max(12, Math.round(state.boss.mag * 0.78));
-    const heroes = state.heroes.map((hero) =>
-      hero.hp > 0
-        ? {
-            ...hero,
-            hp: Math.max(0, hero.hp - Math.max(8, damage - hero.res * 0.25)),
-          }
-        : hero
-    );
+    let misses = 0;
+    let crits = 0;
+    const heroes = state.heroes.map((hero) => {
+      if (hero.hp <= 0) return hero;
+
+      const missed =
+        Math.random() < getMissChance(state.boss, hero, BOSS_SPECIAL_SKILL);
+
+      if (missed) {
+        misses += 1;
+        return hero;
+      }
+
+      const critical =
+        Math.random() < getCritChance(state.boss, BOSS_SPECIAL_SKILL);
+      if (critical) crits += 1;
+
+      const finalDamage = Math.round(
+        Math.max(8, damage - hero.res * 0.25) * (critical ? 1.45 : 1)
+      );
+
+      return {
+        ...hero,
+        hp: Math.max(0, hero.hp - finalDamage),
+      };
+    });
     const status = heroes.every((hero) => hero.hp <= 0) ? 'lost' : 'active';
     const nextIndex = getNextLivingHeroIndex(heroes, state.activeHeroIndex);
+    const suffix =
+      misses > 0 || crits > 0
+        ? ` (${misses} miss${misses === 1 ? '' : 'es'}${crits > 0 ? `, ${crits} crit` : ''})`
+        : '';
 
-    return {
+    return tickBattleEffects({
       ...state,
       status,
       heroes,
@@ -330,10 +598,10 @@ const resolveBossTurn = (state: BattleState): BattleState => {
       round: nextIndex <= state.activeHeroIndex ? state.round + 1 : state.round,
       logs: addLog(
         state.logs,
-        `${state.boss.name} cast Thread Quake across the party.`,
+        `${state.boss.name} cast Thread Quake${suffix}.`,
         'boss'
       ),
-    };
+    });
   }
 
   const target = chooseBossTarget(state.heroes);
@@ -346,9 +614,16 @@ const resolveBossTurn = (state: BattleState): BattleState => {
     };
   }
 
-  const damage = getDamage(state.boss.atk, target.def, 1.08, 8);
+  const missed =
+    Math.random() < getMissChance(state.boss, target, BOSS_ATTACK_SKILL);
+  const critical =
+    !missed && Math.random() < getCritChance(state.boss, BOSS_ATTACK_SKILL);
+  const baseDamage = missed
+    ? 0
+    : getDamage(state.boss.atk, target.def, BOSS_ATTACK_SKILL.power, 8);
+  const damage = critical ? Math.round(baseDamage * 1.45) : baseDamage;
   const heroes = state.heroes.map((hero) =>
-    hero.id === target.id
+    hero.id === target.id && !missed
       ? {
           ...hero,
           hp: Math.max(0, hero.hp - damage),
@@ -357,8 +632,11 @@ const resolveBossTurn = (state: BattleState): BattleState => {
   );
   const status = heroes.every((hero) => hero.hp <= 0) ? 'lost' : 'active';
   const nextIndex = getNextLivingHeroIndex(heroes, state.activeHeroIndex);
+  const logMessage = missed
+    ? `${state.boss.name} missed ${target.name}.`
+    : `${state.boss.name} hit ${target.name} for ${damage}${critical ? ' CRIT' : ''}.`;
 
-  return {
+  return tickBattleEffects({
     ...state,
     status,
     heroes,
@@ -368,12 +646,8 @@ const resolveBossTurn = (state: BattleState): BattleState => {
     },
     activeHeroIndex: nextIndex < 0 ? state.activeHeroIndex : nextIndex,
     round: nextIndex <= state.activeHeroIndex ? state.round + 1 : state.round,
-    logs: addLog(
-      state.logs,
-      `${state.boss.name} hit ${target.name} for ${damage}.`,
-      'boss'
-    ),
-  };
+    logs: addLog(state.logs, logMessage, 'boss'),
+  });
 };
 
 export const resolveHeroAction = (
@@ -385,7 +659,10 @@ export const resolveHeroAction = (
   const actor = state.heroes[state.activeHeroIndex];
 
   if (!actor || actor.hp <= 0) {
-    const nextIndex = getNextLivingHeroIndex(state.heroes, state.activeHeroIndex);
+    const nextIndex = getNextLivingHeroIndex(
+      state.heroes,
+      state.activeHeroIndex
+    );
 
     return {
       ...state,
@@ -393,17 +670,44 @@ export const resolveHeroAction = (
     };
   }
 
+  // Debuff: Daze — skip this hero's turn entirely
+  if (actor.statusEffects.some((e) => e.effectType === 'daze')) {
+    const nextIndex = getNextLivingHeroIndex(state.heroes, state.activeHeroIndex);
+    return resolveBossTurn({
+      ...state,
+      activeHeroIndex: nextIndex < 0 ? state.activeHeroIndex : nextIndex,
+      round: nextIndex <= state.activeHeroIndex ? state.round + 1 : state.round,
+      logs: addLog(state.logs, `${actor.name} is dazed and loses their turn!`, 'system'),
+    });
+  }
+
+  // Debuff: Silence / Berserk — force basic attack
+  const isSilenced = actor.statusEffects.some((e) => e.effectType === 'silence');
+  const isBerserked = actor.statusEffects.some((e) => e.effectType === 'berserk');
+  const forcedToAttack =
+    (isSilenced || isBerserked) && (action === 'skill' || action === 'ultimate');
+
+  let preLog = state.logs;
+  if (forcedToAttack) {
+    const reason = isBerserked ? 'berserk' : 'silenced';
+    preLog = addLog(preLog, `${actor.name} is ${reason}! Falls back to basic attack.`, 'system');
+  }
+
   // Enforce skill cooldown — fall back to basic attack if on cooldown
-  const effectiveAction: BattleAction =
-    action === 'skill' && actor.skillCooldown > 0 ? 'attack' : action;
+  const effectiveAction: BattleAction = forcedToAttack
+    ? 'attack'
+    : action === 'skill' && actor.skillCooldown > 0
+      ? 'attack'
+      : action;
   const newCooldown =
     effectiveAction === 'skill' ? 3 : Math.max(0, actor.skillCooldown - 1);
 
   const skill = getActionSkill(actor, effectiveAction);
+  const stateWithLog = { ...state, logs: preLog };
   const afterHero =
     skill.kind === 'heal'
-      ? resolveHeal(state, actor, skill, effectiveAction)
-      : resolveHeroStrike(state, actor, skill, effectiveAction);
+      ? resolveHeal(stateWithLog, actor, skill, effectiveAction)
+      : resolveHeroStrike(stateWithLog, actor, skill, effectiveAction);
 
   // Apply cooldown update to the actor in the resulting state
   const afterCooldown = {

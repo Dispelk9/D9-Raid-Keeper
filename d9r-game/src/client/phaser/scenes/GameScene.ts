@@ -1,61 +1,95 @@
 import Phaser from 'phaser';
 import { context } from '@devvit/web/client';
-import { COLORS, FONT, H, HEADER_H, PAD, RARITY_COLOR, ROLE_COLOR, W } from '../constants';
-import { HERO_SHEET_KEY } from './BootScene';
+import { COLORS, FONT, H, HEADER_H, PAD, RARITY_COLOR, W } from '../constants';
+import {
+  DAMAGE_EFFECT_KEY,
+  HUD_KEY,
+  SNOO_CENTER_SHEET_KEY,
+  SNOO_LEFT_SHEET_KEY,
+} from './BootScene';
 import { loadKeeperSave, persistKeeperSave } from '../../keeper/api';
-import { HEROES } from '../../../shared/game/data/heroes';
+import {
+  HEROES,
+  getHeroSkillForLevel,
+  getNextHeroSkillUnlock,
+} from '../../../shared/game/data/heroes';
 import { getBossAppearance } from '../../../shared/game/data/raidBosses';
 import {
-  applyBattleRewards, canUpgradeHero, claimDailyReward,
-  createBattleRewards, getHeroProgress, getScaledStats,
-  getUpgradeCost, upgradeHero,
+  DAILY_REWARD,
+  applyBattleRewards,
+  canClaimDailyReward,
+  canUpgradeHero,
+  claimDailyReward,
+  createBattleRewards,
+  getHeroProgress,
+  getScaledStats,
+  getUpgradeCost,
+  upgradeHero,
 } from '../../../shared/game/logic/progression';
 import {
-  canUseSkill, canUseUltimate, createBattleState,
-  getActiveHero, resolveHeroAction,
+  MAX_LOGS,
+  canUseSkill,
+  canUseUltimate,
+  createBattleState,
+  getActiveHero,
+  resolveHeroAction,
 } from '../../../shared/game/logic/combat';
 import type {
-  BattleAction, BattleState, HeroTemplate, PlayerSave, RewardBundle,
+  BattleAction,
+  BattleLogEntry,
+  BattleState,
+  HeroTemplate,
+  PlayerSave,
+  RewardBundle,
 } from '../../../shared/game/types';
 
 type View = 'raid' | 'heroes' | 'loot';
 
 const ENERGY_COST = 10;
 const fmt = (n: number) => Math.round(n).toLocaleString();
+const fmtCompact = (n: number) =>
+  Intl.NumberFormat('en', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(Math.round(n));
 const clamp = (v: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 
 // ── Layout (no tab bar) ────────────────────────────────────────────────────
-const GAME_Y    = HEADER_H + PAD;           // 60
-const STAGE_X   = PAD;                       // 8
-const STAGE_Y   = GAME_Y;                    // 60
-const STAGE_W   = W - PAD * 2;              // 414
-const STAGE_H   = 504;
+const GAME_Y = HEADER_H + PAD; // 60
+const STAGE_X = PAD; // 8
+const STAGE_Y = GAME_Y; // 60
+const STAGE_W = W - PAD * 2; // 414
+const STAGE_H = 504;
 const INFO_BAR_H = 52;
-const ACTION_H  = 44;
-const BOSS_AREA_W  = Math.floor(STAGE_W * 0.52);
-const HERO_AREA_X  = STAGE_X + BOSS_AREA_W + PAD;
-const HERO_AREA_W  = STAGE_W - BOSS_AREA_W - PAD;
-const CONTENT_H    = STAGE_H - INFO_BAR_H - PAD - ACTION_H - PAD;
-const HERO_SLOT_H  = Math.floor((CONTENT_H - 4 * 5) / 5);
-const HERO_CIRCLE_R = Math.floor(HERO_SLOT_H * 0.36);
-const HERO_BAR_X_OFF = HERO_CIRCLE_R * 2 + PAD * 3;
-const HERO_BAR_W    = HERO_AREA_W - HERO_BAR_X_OFF - PAD;
-const STATS_BAR_Y  = STAGE_Y + STAGE_H + PAD;
+const ACTION_H = 64;
+const BOSS_AREA_W = Math.floor(STAGE_W * 0.52);
+const HERO_AREA_X = STAGE_X + BOSS_AREA_W + PAD;
+const HERO_AREA_W = STAGE_W - BOSS_AREA_W - PAD;
+const CONTENT_H = STAGE_H - INFO_BAR_H - PAD - ACTION_H - PAD;
+const HERO_SLOT_H = Math.floor((CONTENT_H - 4 * 5) / 5);
+const HERO_SPRITE_SIZE = 72;
+const HERO_BAR_X_OFF = HERO_SPRITE_SIZE - 2;
+const STATS_BAR_Y = STAGE_Y + STAGE_H + PAD;
 
 type HeroSlotRef = {
-  bg: Phaser.GameObjects.Graphics;
-  roleCircle: Phaser.GameObjects.Arc;
   icon: Phaser.GameObjects.Image;
-  hpFill: Phaser.GameObjects.Rectangle;
-  chargeFill: Phaser.GameObjects.Rectangle;
-  iconCX: number; iconCY: number;
-  sx: number; sy: number; sw: number; sh: number;
+  hpText: Phaser.GameObjects.Text;
+  lbText: Phaser.GameObjects.Text;
+  objects: Array<Phaser.GameObjects.Image | Phaser.GameObjects.Text>;
+  iconCX: number;
+  iconCY: number;
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
 };
 
 type HeroCardRef = {
   heroId: string;
   levelText: Phaser.GameObjects.Text;
   btnBg: Phaser.GameObjects.Rectangle;
+  partyBg: Phaser.GameObjects.Rectangle;
+  partyText: Phaser.GameObjects.Text;
 };
 
 export class GameScene extends Phaser.Scene {
@@ -64,7 +98,6 @@ export class GameScene extends Phaser.Scene {
   private battle: BattleState | null = null;
   private view: View = 'raid';
   private lastRewards: RewardBundle | null = null;
-  private statsExpanded = false;
   private selectedHeroId: string | null = null;
   private settingsPanelOpen = false;
 
@@ -77,7 +110,7 @@ export class GameScene extends Phaser.Scene {
   private detailGroup!: Phaser.GameObjects.Container;
 
   // Header
-  private energyText!: Phaser.GameObjects.Text;
+  private resourceText!: Phaser.GameObjects.Text;
   private raidLvText!: Phaser.GameObjects.Text;
 
   // Boss
@@ -87,6 +120,8 @@ export class GameScene extends Phaser.Scene {
   private bossNameText!: Phaser.GameObjects.Text;
   private bossHpText!: Phaser.GameObjects.Text;
   private bossHpFill!: Phaser.GameObjects.Rectangle;
+  private bossCX = 0;
+  private bossCY = 0;
 
   // Hero slots
   private heroSlots: HeroSlotRef[] = [];
@@ -94,21 +129,23 @@ export class GameScene extends Phaser.Scene {
 
   // Action buttons
   private attackBtnBg!: Phaser.GameObjects.Rectangle;
+  private attackBtnText!: Phaser.GameObjects.Text;
   private skillBtnBg!: Phaser.GameObjects.Rectangle;
   private skillBtnText!: Phaser.GameObjects.Text;
   private ultBtnBg!: Phaser.GameObjects.Rectangle;
   private ultBtnText!: Phaser.GameObjects.Text;
 
-  // Stats bar
-  private statsHeroText!: Phaser.GameObjects.Text;
-  private statsRoundText!: Phaser.GameObjects.Text;
-  private statsChevron!: Phaser.GameObjects.Text;
-  private statsValuesGroup!: Phaser.GameObjects.Container;
-  private statValueTexts: Phaser.GameObjects.Text[] = [];
+  // Battle log
+  private battleLogLines: Phaser.GameObjects.Text[] = [];
+  private battleLogHeader!: Phaser.GameObjects.Text;
 
   // Settings panel
   private settingsCurrTexts: Phaser.GameObjects.Text[] = [];
   private settingsNavBtns: Phaser.GameObjects.Rectangle[] = [];
+  private dailyActBg!: Phaser.GameObjects.Graphics;
+  private dailyActHit!: Phaser.GameObjects.Rectangle;
+  private dailyActText!: Phaser.GameObjects.Text;
+  private dailyActSubText!: Phaser.GameObjects.Text;
 
   // Result overlay
   private resultStatusText!: Phaser.GameObjects.Text;
@@ -130,14 +167,15 @@ export class GameScene extends Phaser.Scene {
   private detailUltText!: Phaser.GameObjects.Text;
   private detailUpgradeBg!: Phaser.GameObjects.Rectangle;
   private detailUpgradeText!: Phaser.GameObjects.Text;
-  private detailIconText!: Phaser.GameObjects.Text;
-  private detailCircle!: Phaser.GameObjects.Arc;
+  private detailHeroIcon!: Phaser.GameObjects.Image;
 
   // Loot view
   private lootStatTexts: Phaser.GameObjects.Text[] = [];
   private lootItemsGroup!: Phaser.GameObjects.Container;
 
-  constructor() { super({ key: 'Game' }); }
+  constructor() {
+    super({ key: 'Game' });
+  }
 
   // ══════════════════════════════════════════════════════════════════════
   // Lifecycle
@@ -146,9 +184,9 @@ export class GameScene extends Phaser.Scene {
   async create() {
     this.add.rectangle(W / 2, H / 2, W, H, COLORS.pageBg);
 
-    this.raidGroup   = this.add.container(0, 0).setDepth(2);
+    this.raidGroup = this.add.container(0, 0).setDepth(2);
     this.heroesGroup = this.add.container(0, 0).setDepth(2);
-    this.lootGroup   = this.add.container(0, 0).setDepth(2);
+    this.lootGroup = this.add.container(0, 0).setDepth(2);
 
     this.buildHeader();
     this.buildRaidView();
@@ -172,23 +210,31 @@ export class GameScene extends Phaser.Scene {
 
   private buildHeader() {
     // BG and separator — static, always visible, no container needed
-    this.add.rectangle(W / 2, HEADER_H / 2, W, HEADER_H, COLORS.headerBg).setDepth(8);
+    this.add
+      .rectangle(W / 2, HEADER_H / 2, W, HEADER_H, COLORS.headerBg)
+      .setDepth(8);
     this.add.rectangle(W / 2, HEADER_H - 1, W, 1, COLORS.border).setDepth(8);
 
     // ⚙️ gear icon — left
     this.add
-      .text(PAD + 16, HEADER_H / 2, '⚙️', { fontSize: '26px', fontFamily: FONT.emoji })
+      .text(PAD + 16, HEADER_H / 2, '⚙️', {
+        fontSize: '26px',
+        fontFamily: FONT.emoji,
+      })
       .setOrigin(0.5)
       .setDepth(9)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.toggleSettingsPanel());
 
-    // ⚡ Energy — right of center
-    this.energyText = this.add
-      .text(W - 96, HEADER_H / 2, '⚡0', {
-        fontSize: '12px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#52525b',
+    this.resourceText = this.add
+      .text(PAD + 40, HEADER_H / 2, 'G0  T0  ◆0  ⚡0', {
+        fontSize: '11px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#52525b',
       })
       .setOrigin(0, 0.5)
+      .setWordWrapWidth(W - 108)
       .setDepth(9);
 
     // RAID level badge — far right
@@ -198,14 +244,20 @@ export class GameScene extends Phaser.Scene {
 
     this.add
       .text(W - 30, HEADER_H / 2 - 8, 'RAID', {
-        fontSize: '8px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#ffffff',
+        fontSize: '8px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
       })
       .setOrigin(0.5)
       .setDepth(9);
 
     this.raidLvText = this.add
       .text(W - 30, HEADER_H / 2 + 8, '1', {
-        fontSize: '15px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#ffffff',
+        fontSize: '15px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
       })
       .setOrigin(0.5)
       .setDepth(9);
@@ -219,14 +271,16 @@ export class GameScene extends Phaser.Scene {
     const objs: Phaser.GameObjects.GameObject[] = [];
 
     // Full-screen dim overlay
-    const overlay = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.6).setInteractive();
+    const overlay = this.add
+      .rectangle(W / 2, H / 2, W, H, 0x000000, 0.6)
+      .setInteractive();
     overlay.on('pointerdown', () => this.toggleSettingsPanel());
     objs.push(overlay);
 
     const panelX = PAD * 2;
     const panelY = HEADER_H + PAD;
     const panelW = W - PAD * 4;
-    const panelH = 310;
+    const panelH = 370;
 
     const panelBg = this.add.graphics();
     panelBg.fillStyle(COLORS.white);
@@ -237,9 +291,14 @@ export class GameScene extends Phaser.Scene {
 
     // Title
     objs.push(
-      this.add.text(panelX + PAD * 2, panelY + 14, 'Reddit Raid Keeper', {
-        fontSize: '18px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
-      }).setOrigin(0, 0)
+      this.add
+        .text(panelX + PAD * 2, panelY + 14, 'D9 Raid Keeper', {
+          fontSize: '18px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#18181b',
+        })
+        .setOrigin(0, 0)
     );
 
     // Currency tiles row
@@ -252,18 +311,29 @@ export class GameScene extends Phaser.Scene {
       const tx = panelX + PAD + i * (tileW + PAD);
 
       const bg = this.add.graphics();
-      bg.fillStyle(0xf5f5f5); bg.fillRoundedRect(tx, tilesY, tileW, 54, 6);
+      bg.fillStyle(0xf5f5f5);
+      bg.fillRoundedRect(tx, tilesY, tileW, 54, 6);
       objs.push(bg);
 
       objs.push(
-        this.add.text(tx + tileW / 2, tilesY + 11, lbl.toUpperCase(), {
-          fontSize: '9px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#71717a',
-        }).setOrigin(0.5, 0)
+        this.add
+          .text(tx + tileW / 2, tilesY + 11, lbl.toUpperCase(), {
+            fontSize: '9px',
+            fontStyle: 'bold',
+            fontFamily: FONT.sans,
+            color: '#71717a',
+          })
+          .setOrigin(0.5, 0)
       );
 
-      const val = this.add.text(tx + tileW / 2, tilesY + 27, '0', {
-        fontSize: '14px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
-      }).setOrigin(0.5, 0);
+      const val = this.add
+        .text(tx + tileW / 2, tilesY + 27, '0', {
+          fontSize: '14px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#18181b',
+        })
+        .setOrigin(0.5, 0);
       objs.push(val);
       currTexts.push(val);
     });
@@ -271,9 +341,14 @@ export class GameScene extends Phaser.Scene {
 
     // Section divider label
     objs.push(
-      this.add.text(panelX + PAD * 2, tilesY + 62, 'NAVIGATE', {
-        fontSize: '9px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#a1a1aa',
-      }).setOrigin(0, 0)
+      this.add
+        .text(panelX + PAD * 2, tilesY + 62, 'NAVIGATE', {
+          fontSize: '9px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#a1a1aa',
+        })
+        .setOrigin(0, 0)
     );
 
     // Nav buttons
@@ -300,25 +375,159 @@ export class GameScene extends Phaser.Scene {
       navBtns.push(btn);
 
       objs.push(
-        this.add.text(bx + navBtnW / 2, navY + navH / 2 - 8, navIcons[i] ?? '', {
-          fontSize: '18px', fontFamily: FONT.emoji,
-        }).setOrigin(0.5)
+        this.add
+          .text(bx + navBtnW / 2, navY + navH / 2 - 8, navIcons[i] ?? '', {
+            fontSize: '18px',
+            fontFamily: FONT.emoji,
+          })
+          .setOrigin(0.5)
       );
       objs.push(
-        this.add.text(bx + navBtnW / 2, navY + navH / 2 + 11, v.charAt(0).toUpperCase() + v.slice(1), {
-          fontSize: '11px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#ffffff',
-        }).setOrigin(0.5)
+        this.add
+          .text(
+            bx + navBtnW / 2,
+            navY + navH / 2 + 11,
+            v.charAt(0).toUpperCase() + v.slice(1),
+            {
+              fontSize: '11px',
+              fontStyle: 'bold',
+              fontFamily: FONT.sans,
+              color: '#ffffff',
+            }
+          )
+          .setOrigin(0.5)
       );
     });
     this.settingsNavBtns = navBtns;
 
+    // Action buttons row
+    const actLblY = navY + navH + PAD * 2;
     objs.push(
-      this.add.text(panelX + panelW / 2, navY + navH + PAD * 2, 'tap outside to close', {
-        fontSize: '11px', fontFamily: FONT.sans, color: '#a1a1aa',
-      }).setOrigin(0.5, 0)
+      this.add
+        .text(panelX + PAD * 2, actLblY, 'ACTIONS', {
+          fontSize: '9px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#a1a1aa',
+        })
+        .setOrigin(0, 0)
     );
 
-    this.settingsGroup = this.add.container(0, 0, objs).setDepth(28).setVisible(false);
+    const actionBtnY = actLblY + 18;
+    const actionBtnH = 42;
+    const actionBtnW = (panelW - PAD * 3) / 2;
+
+    this.dailyActBg = this.add.graphics();
+    this.dailyActBg.fillStyle(COLORS.btnGreen);
+    this.dailyActBg.fillRoundedRect(
+      panelX + PAD,
+      actionBtnY,
+      actionBtnW,
+      actionBtnH,
+      6
+    );
+    objs.push(this.dailyActBg);
+    this.dailyActHit = this.add
+      .rectangle(
+        panelX + PAD + actionBtnW / 2,
+        actionBtnY + actionBtnH / 2,
+        actionBtnW,
+        actionBtnH,
+        0,
+        0
+      )
+      .setInteractive({ useHandCursor: true });
+    this.dailyActHit.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+      ptr.event.stopPropagation();
+      this.handleDailyClaim();
+    });
+    objs.push(this.dailyActHit);
+    this.dailyActText = this.add
+      .text(panelX + PAD + actionBtnW / 2, actionBtnY + 13, 'Daily Reward', {
+        fontSize: '12px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
+      })
+      .setOrigin(0.5);
+    this.dailyActSubText = this.add
+      .text(
+        panelX + PAD + actionBtnW / 2,
+        actionBtnY + 29,
+        `+${DAILY_REWARD.gold}G +${DAILY_REWARD.gems}◆ +${DAILY_REWARD.energy}⚡`,
+        {
+          fontSize: '9px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#dcfce7',
+        }
+      )
+      .setOrigin(0.5);
+    objs.push(this.dailyActText, this.dailyActSubText);
+
+    const raidActBtnX = panelX + PAD * 2 + actionBtnW;
+    const raidActBg = this.add.graphics();
+    raidActBg.fillStyle(COLORS.ink);
+    raidActBg.fillRoundedRect(
+      raidActBtnX,
+      actionBtnY,
+      actionBtnW,
+      actionBtnH,
+      6
+    );
+    objs.push(raidActBg);
+    const raidActHit = this.add
+      .rectangle(
+        raidActBtnX + actionBtnW / 2,
+        actionBtnY + actionBtnH / 2,
+        actionBtnW,
+        actionBtnH,
+        0,
+        0
+      )
+      .setInteractive({ useHandCursor: true });
+    raidActHit.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+      ptr.event.stopPropagation();
+      this.settingsPanelOpen = false;
+      this.settingsGroup.setVisible(false);
+      this.handleStartRaid();
+    });
+    objs.push(raidActHit);
+    objs.push(
+      this.add
+        .text(
+          raidActBtnX + actionBtnW / 2,
+          actionBtnY + actionBtnH / 2,
+          'New Raid',
+          {
+            fontSize: '12px',
+            fontStyle: 'bold',
+            fontFamily: FONT.sans,
+            color: '#ffffff',
+          }
+        )
+        .setOrigin(0.5)
+    );
+
+    objs.push(
+      this.add
+        .text(
+          panelX + panelW / 2,
+          actionBtnY + actionBtnH + PAD * 2,
+          'tap outside to close',
+          {
+            fontSize: '11px',
+            fontFamily: FONT.sans,
+            color: '#a1a1aa',
+          }
+        )
+        .setOrigin(0.5, 0)
+    );
+
+    this.settingsGroup = this.add
+      .container(0, 0, objs)
+      .setDepth(28)
+      .setVisible(false);
   }
 
   private toggleSettingsPanel() {
@@ -327,16 +536,37 @@ export class GameScene extends Phaser.Scene {
 
     if (this.settingsPanelOpen && this.profile) {
       const vals = [
-        this.profile.gold, this.profile.gems,
-        this.profile.energy, this.profile.raidTokens,
+        this.profile.gold,
+        this.profile.gems,
+        this.profile.energy,
+        this.profile.raidTokens,
       ];
       vals.forEach((v, i) => this.settingsCurrTexts[i]?.setText(fmt(v)));
+      this.refreshDailyAction();
 
       const views: View[] = ['raid', 'heroes', 'loot'];
       views.forEach((v, i) => {
-        this.settingsNavBtns[i]?.setFillStyle(v === this.view ? COLORS.btnSkill : COLORS.ink);
+        this.settingsNavBtns[i]?.setFillStyle(
+          v === this.view ? COLORS.btnSkill : COLORS.ink
+        );
       });
     }
+  }
+
+  private refreshDailyAction() {
+    if (!this.profile) return;
+
+    const available = canClaimDailyReward(this.profile);
+    this.dailyActBg.setAlpha(available ? 1 : 0.42);
+    this.dailyActText.setText(available ? 'Daily Reward' : 'Claimed Today');
+    this.dailyActSubText.setText(
+      available
+        ? `+${DAILY_REWARD.gold}G +${DAILY_REWARD.gems}◆ +${DAILY_REWARD.energy}⚡`
+        : 'Resets tomorrow'
+    );
+    available
+      ? this.dailyActHit.setInteractive({ useHandCursor: true })
+      : this.dailyActHit.disableInteractive();
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -350,23 +580,22 @@ export class GameScene extends Phaser.Scene {
     this.buildHeroSlotsUI();
     this.buildActionButtons();
     this.buildActiveHighlight();
-    this.buildStatsBar();
+    this.buildBattleLog();
   }
 
   private buildBattleField() {
-    const gfx = this.add.graphics();
-    gfx.fillStyle(COLORS.fieldBg);
-    gfx.fillRoundedRect(STAGE_X, STAGE_Y, STAGE_W, STAGE_H, 8);
-    gfx.lineStyle(1, 0xffffff, 0.12);
-    for (let gx = STAGE_X; gx < STAGE_X + STAGE_W; gx += 42)
-      gfx.lineBetween(gx, STAGE_Y, gx, STAGE_Y + STAGE_H);
-    for (let gy = STAGE_Y; gy < STAGE_Y + STAGE_H; gy += 42)
-      gfx.lineBetween(STAGE_X, gy, STAGE_X + STAGE_W, gy);
-    gfx.fillStyle(0xf97316, 0.1);
-    gfx.fillCircle(STAGE_X + STAGE_W * 0.84, STAGE_Y + STAGE_H * 0.15, 22);
-    gfx.fillStyle(0x0ea5e9, 0.1);
-    gfx.fillCircle(STAGE_X + STAGE_W * 0.73, STAGE_Y + STAGE_H * 0.82, 26);
-    this.raidGroup.add(gfx);
+    // Background image stretched to fill the stage
+    const bgImg = this.add
+      .image(STAGE_X + STAGE_W / 2, STAGE_Y + STAGE_H / 2, 'battle-bg')
+      .setDisplaySize(STAGE_W, STAGE_H)
+      .setOrigin(0.5);
+
+    // Dark gradient on the hero panel side so slot text stays readable
+    const shade = this.add.graphics();
+    shade.fillStyle(0x000000, 0.28);
+    shade.fillRect(HERO_AREA_X - PAD, STAGE_Y, HERO_AREA_W + PAD * 2, STAGE_H);
+
+    this.raidGroup.add([bgImg, shade]);
   }
 
   private buildBossInfoBar() {
@@ -378,23 +607,49 @@ export class GameScene extends Phaser.Scene {
     bg.fillStyle(0xffffff, 0.94);
     bg.fillRoundedRect(bx, by, bw, INFO_BAR_H, 6);
 
-    this.bossTitleText = this.add.text(bx + PAD, by + 8, '', {
-      fontSize: '9px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#b91c1c',
-    }).setOrigin(0, 0);
+    this.bossTitleText = this.add
+      .text(bx + PAD, by + 8, '', {
+        fontSize: '9px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#b91c1c',
+      })
+      .setOrigin(0, 0);
 
-    this.bossNameText = this.add.text(bx + PAD, by + 20, '', {
-      fontSize: '13px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
-    }).setOrigin(0, 0);
+    this.bossNameText = this.add
+      .text(bx + PAD, by + 20, '', {
+        fontSize: '13px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#18181b',
+      })
+      .setOrigin(0, 0);
 
-    this.bossHpText = this.add.text(bx + bw - PAD, by + 14, '', {
-      fontSize: '10px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#52525b',
-    }).setOrigin(1, 0.5);
+    this.bossHpText = this.add
+      .text(bx + bw - PAD, by + 14, '', {
+        fontSize: '10px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#52525b',
+      })
+      .setOrigin(1, 0.5);
 
     const hpY = by + INFO_BAR_H - 11;
-    const hpTrack = this.add.rectangle(bx + bw / 2, hpY, bw, 7, COLORS.track).setOrigin(0.5);
-    this.bossHpFill = this.add.rectangle(bx, hpY, bw, 7, COLORS.boss).setOrigin(0, 0.5);
+    const hpTrack = this.add
+      .rectangle(bx + bw / 2, hpY, bw, 7, COLORS.track)
+      .setOrigin(0.5);
+    this.bossHpFill = this.add
+      .rectangle(bx, hpY, bw, 7, COLORS.boss)
+      .setOrigin(0, 0.5);
 
-    this.raidGroup.add([bg, this.bossTitleText, this.bossNameText, this.bossHpText, hpTrack, this.bossHpFill]);
+    this.raidGroup.add([
+      bg,
+      this.bossTitleText,
+      this.bossNameText,
+      this.bossHpText,
+      hpTrack,
+      this.bossHpFill,
+    ]);
   }
 
   private buildBossSprite() {
@@ -403,16 +658,33 @@ export class GameScene extends Phaser.Scene {
     const bossCX = STAGE_X + Math.floor(BOSS_AREA_W / 2);
     const bossCY = contentY + Math.floor(contentH / 2);
     const bossR = 56;
+    this.bossCX = bossCX;
+    this.bossCY = bossCY;
 
-    this.bossAura = this.add.arc(bossCX, bossCY, bossR + 20, 0, 360, false, COLORS.boss, 0.25);
+    this.bossAura = this.add.arc(
+      bossCX,
+      bossCY,
+      bossR + 20,
+      0,
+      360,
+      false,
+      COLORS.boss,
+      0.25
+    );
     this.tweens.add({
       targets: this.bossAura,
-      scaleX: 1.12, scaleY: 1.12, alpha: 0.1,
-      duration: 950, ease: 'Sine.InOut', yoyo: true, repeat: -1,
+      scaleX: 1.12,
+      scaleY: 1.12,
+      alpha: 0.1,
+      duration: 950,
+      ease: 'Sine.InOut',
+      yoyo: true,
+      repeat: -1,
     });
 
     // Boss image — texture is set in refreshBoss(); display size fits the circle
-    this.bossImage = this.add.image(bossCX, bossCY, 'boss-goo')
+    this.bossImage = this.add
+      .image(bossCX, bossCY, 'boss-goo')
       .setDisplaySize(bossR * 2, bossR * 2)
       .setOrigin(0.5);
 
@@ -422,36 +694,53 @@ export class GameScene extends Phaser.Scene {
   private buildHeroSlotsUI() {
     const contentY = STAGE_Y + INFO_BAR_H + PAD * 2;
     const slotW = HERO_AREA_W - PAD;
+    const textX = HERO_AREA_X + HERO_BAR_X_OFF;
+    const stroke = { stroke: '#000000', strokeThickness: 3 };
 
     for (let i = 0; i < 5; i++) {
       const sx = HERO_AREA_X;
       const sy = contentY + i * (HERO_SLOT_H + 5);
-      const cx = sx + PAD + HERO_CIRCLE_R;
+      const cx = sx + HERO_SPRITE_SIZE / 2 - 2;
       const cy = sy + HERO_SLOT_H / 2;
 
-      const bg = this.add.graphics();
-      bg.fillStyle(COLORS.white, 0.88);
-      bg.fillRoundedRect(sx, sy, slotW, HERO_SLOT_H, 8);
-
-      const roleCircle = this.add.arc(cx, cy, HERO_CIRCLE_R, 0, 360, false, COLORS.warrior, 1);
-      // Sprite frame is updated in refreshHeroSlots once battle state is loaded
-      const icon = this.add.image(cx, cy, HERO_SHEET_KEY, 0)
-        .setDisplaySize(HERO_CIRCLE_R * 2, HERO_CIRCLE_R * 2)
+      const icon = this.add
+        .image(cx, cy, SNOO_LEFT_SHEET_KEY, 0)
+        .setDisplaySize(HERO_SPRITE_SIZE, HERO_SPRITE_SIZE)
+        .setBlendMode(Phaser.BlendModes.SCREEN)
         .setOrigin(0.5);
 
-      const barX = sx + HERO_BAR_X_OFF;
-      const barY = cy - 5;
-      const hpTrack = this.add.rectangle(barX + HERO_BAR_W / 2, barY, HERO_BAR_W, 7, COLORS.track).setOrigin(0.5);
-      const hpFill  = this.add.rectangle(barX, barY, HERO_BAR_W, 7, COLORS.hp).setOrigin(0, 0.5);
+      const hpText = this.add
+        .text(textX, cy - 8, '—', {
+          fontSize: '13px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#ffffff',
+          ...stroke,
+        })
+        .setOrigin(0, 0.5);
 
-      const cBarY = barY + 13;
-      const cTrack = this.add.rectangle(barX + HERO_BAR_W / 2, cBarY, HERO_BAR_W, 4, COLORS.track).setOrigin(0.5);
-      const cFill  = this.add.rectangle(barX, cBarY, HERO_BAR_W, 4, COLORS.charge).setOrigin(0, 0.5);
+      const lbText = this.add
+        .text(textX, cy + 12, '—%', {
+          fontSize: '11px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#fbbf24',
+          ...stroke,
+        })
+        .setOrigin(0, 0.5);
 
-      this.raidGroup.add([bg, hpTrack, cTrack, roleCircle, icon, hpFill, cFill]);
+      this.raidGroup.add([icon, hpText, lbText]);
       this.heroSlots.push({
-        bg, roleCircle, icon, hpFill, chargeFill: cFill,
-        iconCX: cx, iconCY: cy, sx, sy, sw: slotW, sh: HERO_SLOT_H,
+        icon,
+        hpText,
+        lbText,
+        objects: [icon, hpText, lbText],
+        iconCX: cx,
+        iconCY: cy,
+        sx,
+        sy,
+        sw: slotW,
+        sh: HERO_SLOT_H,
       });
     }
   }
@@ -459,25 +748,44 @@ export class GameScene extends Phaser.Scene {
   private buildActionButtons() {
     const btnY = STAGE_Y + STAGE_H - PAD - ACTION_H / 2;
     const btnW = Math.floor((STAGE_W - PAD * 4) / 3);
-    const gap  = Math.floor((STAGE_W - PAD * 2 - btnW * 3) / 2);
+    const gap = Math.floor((STAGE_W - PAD * 2 - btnW * 3) / 2);
     const startX = STAGE_X + PAD + btnW / 2;
 
-    const makeBtn = (cx: number, label: string, color: number) => {
-      const bg  = this.add.rectangle(cx, btnY, btnW, ACTION_H - 4, color).setInteractive({ useHandCursor: true });
-      const txt = this.add.text(cx, btnY, label, {
-        fontSize: '12px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#ffffff',
-      }).setOrigin(0.5);
+    const hud = this.add
+      .image(STAGE_X + STAGE_W / 2, btnY, HUD_KEY)
+      .setDisplaySize(STAGE_W - PAD * 2, ACTION_H)
+      .setOrigin(0.5);
+    this.raidGroup.add(hud);
+
+    const makeBtn = (cx: number, label: string) => {
+      const bg = this.add
+        .rectangle(cx, btnY, btnW, ACTION_H - 18, 0x000000, 0.001)
+        .setInteractive({ useHandCursor: true });
+      const txt = this.add
+        .text(cx, btnY, label, {
+          fontSize: '13px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#ffffff',
+        })
+        .setOrigin(0.5);
       this.raidGroup.add([bg, txt]);
       return [bg, txt] as const;
     };
 
-    [this.attackBtnBg] = makeBtn(startX, 'Attack', COLORS.btnPrimary);
+    [this.attackBtnBg, this.attackBtnText] = makeBtn(startX, 'Attack');
     this.attackBtnBg.on('pointerdown', () => this.handleAction('attack'));
 
-    [this.skillBtnBg, this.skillBtnText] = makeBtn(startX + btnW + gap, 'Skill', COLORS.btnSkill);
+    [this.skillBtnBg, this.skillBtnText] = makeBtn(
+      startX + btnW + gap,
+      'Skill'
+    );
     this.skillBtnBg.on('pointerdown', () => this.handleAction('skill'));
 
-    [this.ultBtnBg, this.ultBtnText] = makeBtn(startX + (btnW + gap) * 2, '⚡ Ult', COLORS.btnUlt);
+    [this.ultBtnBg, this.ultBtnText] = makeBtn(
+      startX + (btnW + gap) * 2,
+      '⚡ Ult'
+    );
     this.ultBtnBg.on('pointerdown', () => this.handleAction('ultimate'));
   }
 
@@ -486,67 +794,43 @@ export class GameScene extends Phaser.Scene {
     this.raidGroup.add(this.activeHighlight);
   }
 
-  private buildStatsBar() {
-    const sbY = STATS_BAR_Y;
-    const sbW = STAGE_W;
-    const sbH = 44;
+  private buildBattleLog() {
+    const lbY = STATS_BAR_Y;
+    const lbW = STAGE_W;
+    const headerH = 22;
+    const lineH = 22;
+    const lbH = headerH + MAX_LOGS * lineH + PAD;
 
-    const sbBg = this.add.graphics();
-    sbBg.fillStyle(COLORS.statsBg);
-    sbBg.fillRoundedRect(STAGE_X, sbY, sbW, sbH, 8);
-    sbBg.lineStyle(1, COLORS.border, 1);
-    sbBg.strokeRoundedRect(STAGE_X, sbY, sbW, sbH, 8);
+    const bg = this.add.graphics();
+    bg.fillStyle(COLORS.statsBg);
+    bg.fillRoundedRect(STAGE_X, lbY, lbW, lbH, 8);
+    bg.lineStyle(1, COLORS.border, 1);
+    bg.strokeRoundedRect(STAGE_X, lbY, lbW, lbH, 8);
 
-    const hitArea = this.add
-      .rectangle(STAGE_X + sbW / 2, sbY + sbH / 2, sbW, sbH, 0, 0)
-      .setInteractive({ useHandCursor: true });
-    hitArea.on('pointerdown', () => this.toggleStats());
+    this.battleLogHeader = this.add
+      .text(STAGE_X + PAD, lbY + 5, 'BATTLE LOG', {
+        fontSize: '9px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#a1a1aa',
+      })
+      .setOrigin(0, 0);
 
-    this.statsHeroText = this.add.text(STAGE_X + PAD, sbY + sbH / 2, '—', {
-      fontSize: '11px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#3f3f46',
-    }).setOrigin(0, 0.5);
+    const lines: Phaser.GameObjects.Text[] = [];
+    for (let i = 0; i < MAX_LOGS; i++) {
+      const lt = this.add
+        .text(STAGE_X + PAD, lbY + headerH + i * lineH, '', {
+          fontSize: '12px',
+          fontFamily: FONT.sans,
+          color: '#3f3f46',
+          wordWrap: { width: lbW - PAD * 2 },
+        })
+        .setOrigin(0, 0);
+      lines.push(lt);
+    }
+    this.battleLogLines = lines;
 
-    this.statsRoundText = this.add.text(STAGE_X + sbW - PAD * 5, sbY + sbH / 2, '', {
-      fontSize: '11px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#71717a',
-    }).setOrigin(1, 0.5);
-
-    this.statsChevron = this.add.text(STAGE_X + sbW - PAD, sbY + sbH / 2, '▼', {
-      fontSize: '10px', fontFamily: FONT.sans, color: '#a1a1aa',
-    }).setOrigin(1, 0.5);
-
-    // Stats values grid
-    const statLabels = ['HP', 'ATK', 'DEF', 'MAG', 'RES', 'SPD'];
-    const tileW = (sbW - PAD * 4) / 3;
-    const tileH = 30;
-    const vgY = sbY + sbH + PAD;
-    const valsBg = this.add.graphics();
-    const valsTexts: Phaser.GameObjects.Text[] = [];
-
-    statLabels.forEach((lbl, i) => {
-      const col = i % 3, row = Math.floor(i / 3);
-      const tx = STAGE_X + PAD + col * (tileW + PAD);
-      const ty = vgY + row * (tileH + 4);
-      valsBg.fillStyle(COLORS.white, 0.9);
-      valsBg.fillRoundedRect(tx, ty, tileW, tileH, 5);
-      this.add.text(tx + PAD, ty + 7, lbl, {
-        fontSize: '8px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#71717a',
-      }).setOrigin(0, 0);
-      const val = this.add.text(tx + PAD, ty + 17, '—', {
-        fontSize: '12px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
-      }).setOrigin(0, 0);
-      valsTexts.push(val);
-    });
-    this.statValueTexts = valsTexts;
-    this.statsValuesGroup = this.add.container(0, 0, [valsBg, ...valsTexts]).setVisible(false);
-
-    this.raidGroup.add([sbBg, hitArea, this.statsHeroText, this.statsRoundText, this.statsChevron, this.statsValuesGroup]);
-  }
-
-  private toggleStats() {
-    this.statsExpanded = !this.statsExpanded;
-    this.statsValuesGroup.setVisible(this.statsExpanded);
-    this.statsChevron.setText(this.statsExpanded ? '▲' : '▼');
-    this.refreshStatsBar();
+    this.raidGroup.add([bg, this.battleLogHeader, ...lines]);
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -572,35 +856,63 @@ export class GameScene extends Phaser.Scene {
     panelBg.strokeRoundedRect(panelX, panelY, panelW, panelH, 12);
     objs.push(panelBg);
 
-    this.resultStatusText = this.add.text(panelCX, panelY + 20, '', {
-      fontSize: '10px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#c2410c',
-    }).setOrigin(0.5, 0);
+    this.resultStatusText = this.add
+      .text(panelCX, panelY + 20, '', {
+        fontSize: '10px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#c2410c',
+      })
+      .setOrigin(0.5, 0);
     objs.push(this.resultStatusText);
 
-    this.resultDamageText = this.add.text(panelCX, panelY + 36, '', {
-      fontSize: '32px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
-    }).setOrigin(0.5, 0);
+    this.resultDamageText = this.add
+      .text(panelCX, panelY + 36, '', {
+        fontSize: '32px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#18181b',
+      })
+      .setOrigin(0.5, 0);
     objs.push(this.resultDamageText);
 
-    this.resultRewardsText = this.add.text(panelCX, panelY + 82, '', {
-      fontSize: '12px', fontFamily: FONT.sans, color: '#52525b',
-    }).setOrigin(0.5, 0);
+    this.resultRewardsText = this.add
+      .text(panelCX, panelY + 82, '', {
+        fontSize: '12px',
+        fontFamily: FONT.sans,
+        color: '#52525b',
+      })
+      .setOrigin(0.5, 0);
     objs.push(this.resultRewardsText);
 
     // Next boss preview panel
     this.resultNextBg = this.add.graphics();
     this.resultNextBg.fillStyle(0xf5f5f5);
-    this.resultNextBg.fillRoundedRect(PAD * 5, panelY + 106, panelW - PAD * 4, 40, 8);
+    this.resultNextBg.fillRoundedRect(
+      PAD * 5,
+      panelY + 106,
+      panelW - PAD * 4,
+      40,
+      8
+    );
     objs.push(this.resultNextBg);
 
-    this.resultNextIcon = this.add.text(PAD * 7, panelY + 126, '', {
-      fontSize: '22px', fontFamily: FONT.emoji,
-    }).setOrigin(0, 0.5);
+    this.resultNextIcon = this.add
+      .text(PAD * 7, panelY + 126, '', {
+        fontSize: '22px',
+        fontFamily: FONT.emoji,
+      })
+      .setOrigin(0, 0.5);
     objs.push(this.resultNextIcon);
 
-    this.resultNextName = this.add.text(PAD * 12, panelY + 126, '', {
-      fontSize: '12px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
-    }).setOrigin(0, 0.5);
+    this.resultNextName = this.add
+      .text(PAD * 12, panelY + 126, '', {
+        fontSize: '12px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#18181b',
+      })
+      .setOrigin(0, 0.5);
     objs.push(this.resultNextName);
 
     // Next raid button
@@ -617,12 +929,20 @@ export class GameScene extends Phaser.Scene {
     objs.push(nextBtnHit);
 
     objs.push(
-      this.add.text(panelCX, nextBtnY + 4, 'Next raid', {
-        fontSize: '14px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#ffffff',
-      }).setOrigin(0.5)
+      this.add
+        .text(panelCX, nextBtnY + 4, 'Next raid', {
+          fontSize: '14px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#ffffff',
+        })
+        .setOrigin(0.5)
     );
 
-    this.resultGroup = this.add.container(0, 0, objs).setDepth(18).setVisible(false);
+    this.resultGroup = this.add
+      .container(0, 0, objs)
+      .setDepth(18)
+      .setVisible(false);
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -631,41 +951,32 @@ export class GameScene extends Phaser.Scene {
 
   private buildHeroesView() {
     const topY = GAME_Y + PAD;
-    const topBtnH = 44;
-    const topBtnW = (W - PAD * 3) / 2;
-
-    const makeLargeBtn = (x: number, label: string, color: number, handler: () => void) => {
-      const bg = this.add.graphics();
-      bg.fillStyle(color); bg.fillRoundedRect(x, topY, topBtnW, topBtnH, 8);
-      const hit = this.add.rectangle(x + topBtnW / 2, topY + topBtnH / 2, topBtnW, topBtnH, 0, 0)
-        .setInteractive({ useHandCursor: true });
-      hit.on('pointerdown', handler);
-      const txt = this.add.text(x + topBtnW / 2, topY + topBtnH / 2, label, {
-        fontSize: '13px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#ffffff',
-      }).setOrigin(0.5);
-      this.heroesGroup.add([bg, hit, txt]);
-    };
-
-    makeLargeBtn(PAD, 'Claim Daily', COLORS.btnGreen, () => this.handleDailyClaim());
-    makeLargeBtn(PAD * 2 + topBtnW, 'New Raid', COLORS.ink, () => this.handleStartRaid());
 
     // Hero cards grid (2 col × 3 row)
     const cardW = Math.floor((W - PAD * 3) / 2);
-    const cardH = 90;
-    const gridStartY = topY + topBtnH + PAD;
+    const cardH = 96;
+    const gridStartY = topY;
 
     HEROES.forEach((hero, i) => {
-      const col = i % 2, row = Math.floor(i / 2);
+      const col = i % 2,
+        row = Math.floor(i / 2);
       const cx = PAD + col * (cardW + PAD);
       const cy = gridStartY + row * (cardH + PAD);
       this.buildHeroCard(hero, cx, cy, cardW, cardH);
     });
   }
 
-  private buildHeroCard(hero: HeroTemplate, x: number, y: number, w: number, h: number) {
-    const circleR = Math.floor(h * 0.35);
-    const cx = x + PAD + circleR;
-    const cy = y + h / 2;
+  private buildHeroCard(
+    hero: HeroTemplate,
+    x: number,
+    y: number,
+    w: number,
+    h: number
+  ) {
+    const spriteSize = 64;
+    const cx = x + PAD + spriteSize / 2;
+    const cy = y + 37;
+    const textX = x + PAD * 2 + spriteSize;
 
     const cardBg = this.add.graphics();
     cardBg.fillStyle(COLORS.white);
@@ -673,42 +984,101 @@ export class GameScene extends Phaser.Scene {
     cardBg.lineStyle(1, COLORS.border, 1);
     cardBg.strokeRoundedRect(x, y, w, h, 8);
 
-    const circle = this.add.arc(cx, cy, circleR, 0, 360, false, ROLE_COLOR[hero.role] ?? COLORS.warrior, 1);
-    const iconT  = this.add.text(cx, cy, hero.icon, {
-      fontSize: `${Math.floor(circleR * 1.1)}px`, fontFamily: FONT.emoji,
-    }).setOrigin(0.5);
+    const hitArea = this.add
+      .rectangle(x + w / 2, y + h / 2, w, h, 0, 0)
+      .setInteractive({ useHandCursor: true });
+    hitArea.on('pointerdown', () => this.showDetail(hero.id));
 
-    this.add.text(cx + circleR + PAD, y + 12, hero.name, {
-      fontSize: '12px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
-    }).setOrigin(0, 0);
+    const iconT = this.add
+      .image(cx, cy, SNOO_CENTER_SHEET_KEY, hero.spriteFrame)
+      .setDisplaySize(spriteSize, spriteSize)
+      .setOrigin(0.5);
 
-    const levelText = this.add.text(cx + circleR + PAD, y + 28, `${hero.role} · Lv 1`, {
-      fontSize: '10px', fontFamily: FONT.sans, color: '#71717a',
-    }).setOrigin(0, 0);
+    const nameText = this.add
+      .text(textX, y + 10, hero.name, {
+        fontSize: '12px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#18181b',
+        wordWrap: { width: w - spriteSize - PAD * 3 },
+      })
+      .setOrigin(0, 0);
 
-    this.add.text(cx + circleR + PAD, y + 44, hero.rarity, {
-      fontSize: '9px', fontStyle: 'bold', fontFamily: FONT.sans,
-      color: '#' + (RARITY_COLOR[hero.rarity] ?? COLORS.rarityCommon).toString(16).padStart(6, '0'),
-    }).setOrigin(0, 0);
+    const levelText = this.add
+      .text(textX, y + 29, `${hero.role} · Lv 1`, {
+        fontSize: '10px',
+        fontFamily: FONT.sans,
+        color: '#71717a',
+      })
+      .setOrigin(0, 0);
 
-    const btnX = x + w - PAD - 60;
-    const btnY = y + h - PAD - 14;
-    const btnBg = this.add.rectangle(btnX + 30, btnY, 60, 28, COLORS.ink).setInteractive({ useHandCursor: true });
-    const btnTxt = this.add.text(btnX + 30, btnY, 'Upgrade', {
-      fontSize: '10px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#ffffff',
-    }).setOrigin(0.5);
+    const rarityText = this.add
+      .text(textX, y + 45, hero.rarity, {
+        fontSize: '9px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color:
+          '#' +
+          (RARITY_COLOR[hero.rarity] ?? COLORS.rarityCommon)
+            .toString(16)
+            .padStart(6, '0'),
+      })
+      .setOrigin(0, 0);
+
+    const smallBtnW = 62;
+    const btnY = y + h - PAD - 12;
+    const partyBg = this.add
+      .rectangle(x + PAD + smallBtnW / 2, btnY, smallBtnW, 24, COLORS.btnSkill)
+      .setInteractive({ useHandCursor: true });
+    const partyText = this.add
+      .text(x + PAD + smallBtnW / 2, btnY, 'Party', {
+        fontSize: '10px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
+      })
+      .setOrigin(0.5);
+    partyBg.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+      ptr.event.stopPropagation();
+      this.handleToggleParty(hero.id);
+    });
+
+    const btnX = x + w - PAD - smallBtnW;
+    const btnBg = this.add
+      .rectangle(btnX + smallBtnW / 2, btnY, smallBtnW, 24, COLORS.ink)
+      .setInteractive({ useHandCursor: true });
+    const btnTxt = this.add
+      .text(btnX + smallBtnW / 2, btnY, 'Upgrade', {
+        fontSize: '10px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
+      })
+      .setOrigin(0.5);
     btnBg.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
       ptr.event.stopPropagation();
       this.handleUpgrade(hero.id);
     });
 
-    // Hit area to open detail
-    const hitArea = this.add.rectangle(x + w / 2, y + h / 2, w, h, 0, 0)
-      .setInteractive({ useHandCursor: true });
-    hitArea.on('pointerdown', () => this.showDetail(hero.id));
-
-    this.heroesGroup.add([cardBg, circle, iconT, levelText, btnBg, btnTxt, hitArea]);
-    this.heroCardRefs.push({ heroId: hero.id, levelText, btnBg });
+    this.heroesGroup.add([
+      cardBg,
+      hitArea,
+      iconT,
+      nameText,
+      levelText,
+      rarityText,
+      partyBg,
+      partyText,
+      btnBg,
+      btnTxt,
+    ]);
+    this.heroCardRefs.push({
+      heroId: hero.id,
+      levelText,
+      btnBg,
+      partyBg,
+      partyText,
+    });
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -722,7 +1092,9 @@ export class GameScene extends Phaser.Scene {
     const sheetY = H - sheetH;
 
     // Dim overlay
-    const overlay = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.55).setInteractive();
+    const overlay = this.add
+      .rectangle(W / 2, H / 2, W, H, 0x000000, 0.55)
+      .setInteractive();
     overlay.on('pointerdown', () => this.hideDetail());
     objs.push(overlay);
 
@@ -737,36 +1109,56 @@ export class GameScene extends Phaser.Scene {
     closeBtn.fillStyle(0xf5f5f5);
     closeBtn.fillCircle(W - PAD * 2 - 14, sheetY + 20, 14);
     objs.push(closeBtn);
-    const closeHit = this.add.rectangle(W - PAD * 2 - 14, sheetY + 20, 32, 32, 0, 0)
+    const closeHit = this.add
+      .rectangle(W - PAD * 2 - 14, sheetY + 20, 32, 32, 0, 0)
       .setInteractive({ useHandCursor: true });
     closeHit.on('pointerdown', () => this.hideDetail());
     objs.push(closeHit);
-    objs.push(this.add.text(W - PAD * 2 - 14, sheetY + 20, '✕', {
-      fontSize: '13px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#52525b',
-    }).setOrigin(0.5));
+    objs.push(
+      this.add
+        .text(W - PAD * 2 - 14, sheetY + 20, '✕', {
+          fontSize: '13px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#52525b',
+        })
+        .setOrigin(0.5)
+    );
 
-    // Hero circle + icon
-    this.detailCircle = this.add.arc(PAD * 2 + 28, sheetY + 26, 28, 0, 360, false, COLORS.warrior, 1);
-    objs.push(this.detailCircle);
-    this.detailIconText = this.add.text(PAD * 2 + 28, sheetY + 26, '⚔️', {
-      fontSize: '28px', fontFamily: FONT.emoji,
-    }).setOrigin(0.5);
-    objs.push(this.detailIconText);
+    this.detailHeroIcon = this.add
+      .image(PAD * 2 + 28, sheetY + 28, SNOO_CENTER_SHEET_KEY, 0)
+      .setDisplaySize(64, 64)
+      .setOrigin(0.5);
+    objs.push(this.detailHeroIcon);
 
     // Hero name / role / rarity
-    this.detailHeroName = this.add.text(PAD * 4 + 56, sheetY + 12, '', {
-      fontSize: '15px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
-    }).setOrigin(0, 0);
+    this.detailHeroName = this.add
+      .text(PAD * 4 + 56, sheetY + 12, '', {
+        fontSize: '15px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#18181b',
+      })
+      .setOrigin(0, 0);
     objs.push(this.detailHeroName);
 
-    this.detailRoleLv = this.add.text(PAD * 4 + 56, sheetY + 30, '', {
-      fontSize: '11px', fontFamily: FONT.sans, color: '#71717a',
-    }).setOrigin(0, 0);
+    this.detailRoleLv = this.add
+      .text(PAD * 4 + 56, sheetY + 30, '', {
+        fontSize: '11px',
+        fontFamily: FONT.sans,
+        color: '#71717a',
+      })
+      .setOrigin(0, 0);
     objs.push(this.detailRoleLv);
 
-    this.detailRarityText = this.add.text(PAD * 4 + 56, sheetY + 46, '', {
-      fontSize: '10px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#7c3aed',
-    }).setOrigin(0, 0);
+    this.detailRarityText = this.add
+      .text(PAD * 4 + 56, sheetY + 46, '', {
+        fontSize: '10px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#7c3aed',
+      })
+      .setOrigin(0, 0);
     objs.push(this.detailRarityText);
 
     // Stats grid (3 col × 2 row)
@@ -777,21 +1169,35 @@ export class GameScene extends Phaser.Scene {
     const statValueTexts: Phaser.GameObjects.Text[] = [];
 
     statLabels.forEach((lbl, i) => {
-      const col = i % 3, row = Math.floor(i / 3);
+      const col = i % 3,
+        row = Math.floor(i / 3);
       const tx = PAD + col * (statTileW + PAD);
       const ty = statsY + row * (statTileH + 4);
 
       const tileBg = this.add.graphics();
-      tileBg.fillStyle(0xf5f5f4); tileBg.fillRoundedRect(tx, ty, statTileW, statTileH, 6);
+      tileBg.fillStyle(0xf5f5f4);
+      tileBg.fillRoundedRect(tx, ty, statTileW, statTileH, 6);
       objs.push(tileBg);
 
-      objs.push(this.add.text(tx + PAD, ty + 7, lbl, {
-        fontSize: '8px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#71717a',
-      }).setOrigin(0, 0));
+      objs.push(
+        this.add
+          .text(tx + PAD, ty + 5, lbl, {
+            fontSize: '9px',
+            fontStyle: 'bold',
+            fontFamily: FONT.sans,
+            color: '#374151',
+          })
+          .setOrigin(0, 0)
+      );
 
-      const val = this.add.text(tx + PAD, ty + 19, '—', {
-        fontSize: '13px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
-      }).setOrigin(0, 0);
+      const val = this.add
+        .text(tx + PAD, ty + 17, '—', {
+          fontSize: '14px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#111827',
+        })
+        .setOrigin(0, 0);
       statValueTexts.push(val);
       objs.push(val);
     });
@@ -799,30 +1205,56 @@ export class GameScene extends Phaser.Scene {
 
     // Skill / Ultimate panels
     const skillY = statsY + statTileH * 2 + 12;
-    const halfW  = (W - PAD * 3) / 2;
+    const halfW = (W - PAD * 3) / 2;
 
     const skillBg = this.add.graphics();
-    skillBg.fillStyle(0xfff7ed); skillBg.fillRoundedRect(PAD, skillY, halfW, 52, 8);
+    skillBg.fillStyle(0xfff7ed);
+    skillBg.fillRoundedRect(PAD, skillY, halfW, 52, 8);
     objs.push(skillBg);
-    objs.push(this.add.text(PAD + 6, skillY + 7, 'SKILL', {
-      fontSize: '8px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#c2410c',
-    }).setOrigin(0, 0));
-    this.detailSkillText = this.add.text(PAD + 6, skillY + 20, '', {
-      fontSize: '11px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
-      wordWrap: { width: halfW - 12 },
-    }).setOrigin(0, 0);
+    objs.push(
+      this.add
+        .text(PAD + 6, skillY + 7, 'SKILL', {
+          fontSize: '8px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#c2410c',
+        })
+        .setOrigin(0, 0)
+    );
+    this.detailSkillText = this.add
+      .text(PAD + 6, skillY + 20, '', {
+        fontSize: '11px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#18181b',
+        wordWrap: { width: halfW - 12 },
+      })
+      .setOrigin(0, 0);
     objs.push(this.detailSkillText);
 
     const ultBg = this.add.graphics();
-    ultBg.fillStyle(0xeef2ff); ultBg.fillRoundedRect(PAD * 2 + halfW, skillY, halfW, 52, 8);
+    ultBg.fillStyle(0xeef2ff);
+    ultBg.fillRoundedRect(PAD * 2 + halfW, skillY, halfW, 52, 8);
     objs.push(ultBg);
-    objs.push(this.add.text(PAD * 2 + halfW + 6, skillY + 7, 'ULTIMATE', {
-      fontSize: '8px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#4338ca',
-    }).setOrigin(0, 0));
-    this.detailUltText = this.add.text(PAD * 2 + halfW + 6, skillY + 20, '', {
-      fontSize: '11px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
-      wordWrap: { width: halfW - 12 },
-    }).setOrigin(0, 0);
+    objs.push(
+      this.add
+        .text(PAD * 2 + halfW + 6, skillY + 7, 'ULTIMATE', {
+          fontSize: '8px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#4338ca',
+        })
+        .setOrigin(0, 0)
+    );
+    this.detailUltText = this.add
+      .text(PAD * 2 + halfW + 6, skillY + 20, '', {
+        fontSize: '11px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#18181b',
+        wordWrap: { width: halfW - 12 },
+      })
+      .setOrigin(0, 0);
     objs.push(this.detailUltText);
 
     // Upgrade button
@@ -836,12 +1268,20 @@ export class GameScene extends Phaser.Scene {
     });
     objs.push(this.detailUpgradeBg);
 
-    this.detailUpgradeText = this.add.text(W / 2, upgBtnY + 20, 'Upgrade', {
-      fontSize: '14px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#ffffff',
-    }).setOrigin(0.5);
+    this.detailUpgradeText = this.add
+      .text(W / 2, upgBtnY + 20, 'Upgrade', {
+        fontSize: '14px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
+      })
+      .setOrigin(0.5);
     objs.push(this.detailUpgradeText);
 
-    this.detailGroup = this.add.container(0, 0, objs).setDepth(28).setVisible(false);
+    this.detailGroup = this.add
+      .container(0, 0, objs)
+      .setDepth(28)
+      .setVisible(false);
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -857,41 +1297,37 @@ export class GameScene extends Phaser.Scene {
     const statTexts: Phaser.GameObjects.Text[] = [];
 
     statLabels.forEach((lbl, i) => {
-      const col = i % 2, row = Math.floor(i / 2);
+      const col = i % 2,
+        row = Math.floor(i / 2);
       const tx = PAD + col * (tileW + PAD);
       const ty = topY + row * (tileH + PAD);
 
       const bg = this.add.graphics();
-      bg.fillStyle(COLORS.white, 0.9); bg.fillRoundedRect(tx, ty, tileW, tileH, 7);
-      this.add.text(tx + PAD, ty + 10, lbl.toUpperCase(), {
-        fontSize: '8px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#71717a',
-      }).setOrigin(0, 0);
-      const val = this.add.text(tx + PAD, ty + 26, '—', {
-        fontSize: '14px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
-      }).setOrigin(0, 0);
+      bg.fillStyle(COLORS.white, 0.9);
+      bg.fillRoundedRect(tx, ty, tileW, tileH, 7);
+      const lblTxt = this.add
+        .text(tx + PAD, ty + 10, lbl.toUpperCase(), {
+          fontSize: '8px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#71717a',
+        })
+        .setOrigin(0, 0);
+      const val = this.add
+        .text(tx + PAD, ty + 26, '—', {
+          fontSize: '14px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#18181b',
+        })
+        .setOrigin(0, 0);
       statTexts.push(val);
-      this.lootGroup.add([bg, val]);
+      this.lootGroup.add([bg, lblTxt, val]);
     });
     this.lootStatTexts = statTexts;
 
-    const btnY = topY + (tileH + PAD) * 2 + PAD;
-    const btnW = (W - PAD * 3) / 2;
-
-    const makeLootBtn = (bx: number, label: string, color: number, handler: () => void) => {
-      const bg = this.add.graphics();
-      bg.fillStyle(color); bg.fillRoundedRect(bx, btnY, btnW, 40, 8);
-      const hit = this.add.rectangle(bx + btnW / 2, btnY + 20, btnW, 40, 0, 0)
-        .setInteractive({ useHandCursor: true });
-      hit.on('pointerdown', handler);
-      const txt = this.add.text(bx + btnW / 2, btnY + 20, label, {
-        fontSize: '13px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#ffffff',
-      }).setOrigin(0.5);
-      this.lootGroup.add([bg, hit, txt]);
-    };
-    makeLootBtn(PAD, 'Daily', COLORS.btnGreen, () => this.handleDailyClaim());
-    makeLootBtn(PAD * 2 + btnW, 'Raid', COLORS.ink, () => this.handleStartRaid());
-
-    this.lootItemsGroup = this.add.container(0, btnY + 52);
+    const itemsStartY = topY + (tileH + PAD) * 2 + PAD;
+    this.lootItemsGroup = this.add.container(0, itemsStartY);
     this.lootGroup.add(this.lootItemsGroup);
   }
 
@@ -915,6 +1351,7 @@ export class GameScene extends Phaser.Scene {
 
   private refreshAll() {
     this.refreshHeader();
+    this.refreshDailyAction();
     this.refreshRaid();
     if (this.view === 'heroes') this.refreshHeroes();
     if (this.view === 'loot') this.refreshLoot();
@@ -922,7 +1359,9 @@ export class GameScene extends Phaser.Scene {
 
   private refreshHeader() {
     if (!this.profile) return;
-    this.energyText.setText(`⚡${this.profile.energy}`);
+    this.resourceText.setText(
+      `G${fmtCompact(this.profile.gold)}  T${fmtCompact(this.profile.raidTokens)}  ◆${fmtCompact(this.profile.gems)}  ⚡${fmtCompact(this.profile.energy)}`
+    );
     this.raidLvText.setText(String(this.profile.raidLevel));
   }
 
@@ -931,17 +1370,27 @@ export class GameScene extends Phaser.Scene {
     this.refreshBoss();
     this.refreshHeroSlots();
     this.refreshButtons();
-    this.refreshStatsBar();
+    this.refreshBattleLog();
     this.refreshResultOverlay();
   }
 
   private refreshBoss() {
     if (!this.battle) return;
     const { boss } = this.battle;
-    this.bossTitleText.setText(boss.title.toUpperCase());
-    this.bossNameText.setText(boss.name);
+    const elite = boss.isElite ?? false;
+
+    this.bossTitleText
+      .setText(
+        `${elite ? '⚡ ELITE · ' : ''}${boss.title.toUpperCase()}`
+      )
+      .setColor(elite ? '#d97706' : '#b91c1c');
+
+    this.bossNameText.setText(
+      `${boss.name}${boss.specialSkill ? `  ${boss.specialSkill.icon}` : ''}`
+    );
     this.bossHpText.setText(`${fmt(boss.hp)}/${fmt(boss.maxHp)}`);
     this.bossHpFill.scaleX = clamp(boss.hp / boss.maxHp);
+    this.bossAura.setFillStyle(elite ? 0xfbbf24 : COLORS.boss, 0.22);
     if (this.textures.exists(boss.spriteKey)) {
       this.bossImage.setTexture(boss.spriteKey).setDisplaySize(112, 112);
     }
@@ -950,27 +1399,36 @@ export class GameScene extends Phaser.Scene {
   private refreshHeroSlots() {
     if (!this.battle) return;
     const { heroes, activeHeroIndex } = this.battle;
-    const activeHero = getActiveHero(this.battle);
+
+    this.heroSlots.forEach((slot) => {
+      slot.objects.forEach((object) => object.setVisible(false));
+    });
 
     heroes.forEach((hero, i) => {
       const slot = this.heroSlots[i];
       if (!slot) return;
       const dead = hero.hp <= 0;
+      const alpha = dead ? 0.4 : 1;
       slot.icon.setFrame(hero.spriteFrame);
-      slot.roleCircle.setFillStyle(dead ? COLORS.muted : (ROLE_COLOR[hero.role] ?? COLORS.warrior));
-      slot.icon.setAlpha(dead ? 0.4 : 1);
-      slot.hpFill.scaleX = clamp(hero.hp / hero.maxHp);
-      slot.chargeFill.scaleX = clamp(hero.charge / 100);
-      slot.bg.setAlpha(dead ? 0.5 : 1);
+      slot.objects.forEach((object) => object.setVisible(true));
+      slot.icon.setAlpha(alpha);
+      slot.hpText
+        .setAlpha(alpha)
+        .setText(`HP ${Math.round(hero.hp)}/${hero.maxHp}`);
+      slot.lbText.setAlpha(alpha).setText(`${Math.round(hero.charge)}% LB`);
     });
 
     this.activeHighlight.clear();
     const activeSlot = this.heroSlots[activeHeroIndex];
     if (activeSlot && this.battle.status === 'active') {
-      this.activeHighlight.lineStyle(3, 0xf97316, 1);
-      this.activeHighlight.strokeRoundedRect(activeSlot.sx, activeSlot.sy, activeSlot.sw, activeSlot.sh, 8);
+      this.activeHighlight.fillStyle(0xf97316, 1);
+      this.activeHighlight.fillRect(
+        activeSlot.sx - 3,
+        activeSlot.sy + activeSlot.sh / 2 - 16,
+        4,
+        32
+      );
     }
-    void activeHero; // suppress unused-var warning
   }
 
   private refreshButtons() {
@@ -978,35 +1436,57 @@ export class GameScene extends Phaser.Scene {
     const active = this.battle.status === 'active';
     const activeHero = getActiveHero(this.battle);
     const skillReady = active && canUseSkill(activeHero);
-    const ultReady   = active && canUseUltimate(activeHero);
+    const ultReady = active && canUseUltimate(activeHero);
 
-    this.attackBtnBg.setFillStyle(active ? COLORS.btnPrimary : COLORS.btnDisabled);
-    active ? this.attackBtnBg.setInteractive() : this.attackBtnBg.disableInteractive();
+    active
+      ? this.attackBtnBg.setInteractive()
+      : this.attackBtnBg.disableInteractive();
+    this.attackBtnText.setAlpha(active ? 1 : 0.42);
 
-    this.skillBtnBg.setFillStyle(skillReady ? COLORS.btnSkill : COLORS.btnDisabled);
-    skillReady ? this.skillBtnBg.setInteractive({ useHandCursor: true }) : this.skillBtnBg.disableInteractive();
-    this.skillBtnText.setText((activeHero?.skillCooldown ?? 0) > 0 ? `CD:${activeHero!.skillCooldown}` : 'Skill');
+    skillReady
+      ? this.skillBtnBg.setInteractive({ useHandCursor: true })
+      : this.skillBtnBg.disableInteractive();
+    this.skillBtnText.setText(
+      (activeHero?.skillCooldown ?? 0) > 0
+        ? `CD:${activeHero!.skillCooldown}`
+        : 'Skill'
+    );
+    this.skillBtnText.setAlpha(skillReady ? 1 : 0.42);
 
-    this.ultBtnBg.setFillStyle(ultReady ? COLORS.btnUlt : COLORS.btnDisabled);
-    ultReady ? this.ultBtnBg.setInteractive({ useHandCursor: true }) : this.ultBtnBg.disableInteractive();
+    ultReady
+      ? this.ultBtnBg.setInteractive({ useHandCursor: true })
+      : this.ultBtnBg.disableInteractive();
     this.ultBtnText.setText(ultReady ? '⚡ Ult' : 'Ult');
+    this.ultBtnText.setAlpha(ultReady ? 1 : 0.42);
   }
 
-  private refreshStatsBar() {
+  private refreshBattleLog() {
     if (!this.battle) return;
+    const logs = this.battle.logs;
     const activeHero = getActiveHero(this.battle);
     const living = this.battle.heroes.filter((h) => h.hp > 0).length;
-    this.statsHeroText.setText(activeHero?.name ?? '—');
-    this.statsRoundText.setText(`${living}/5 · R${this.battle.round}`);
 
-    if (this.statsExpanded && activeHero) {
-      const vals = [
-        `${Math.round(activeHero.hp)}/${activeHero.maxHp}`,
-        String(activeHero.atk), String(activeHero.def),
-        String(activeHero.mag), String(activeHero.res), String(activeHero.spd),
-      ];
-      vals.forEach((v, i) => this.statValueTexts[i]?.setText(v));
-    }
+    this.battleLogHeader.setText(
+      `BATTLE LOG  ·  ${activeHero?.name ?? '—'}  ·  ${living}/${this.battle.heroes.length} alive  ·  R${this.battle.round}`
+    );
+
+    const TONE_COLOR: Record<BattleLogEntry['tone'], string> = {
+      hero: '#15803d',
+      boss: '#dc2626',
+      reward: '#d97706',
+      system: '#6b7280',
+    };
+
+    this.battleLogLines.forEach((lt, i) => {
+      const entry = logs[i];
+      if (!entry) {
+        lt.setText('');
+        return;
+      }
+      lt.setText(entry.message);
+      lt.setColor(TONE_COLOR[entry.tone]);
+      lt.setAlpha(i === 0 ? 1 : Math.max(0.45, 1 - i * 0.12));
+    });
   }
 
   private refreshResultOverlay() {
@@ -1019,7 +1499,9 @@ export class GameScene extends Phaser.Scene {
       this.resultStatusText.setText(won ? 'RAID CLEARED' : 'RAID FAILED');
       this.resultDamageText.setText(fmt(this.battle.totalDamage));
       this.resultRewardsText.setText(
-        this.lastRewards ? `+${this.lastRewards.gold} gold  ·  +${this.lastRewards.exp} EXP` : ''
+        this.lastRewards
+          ? `+${this.lastRewards.gold} gold  ·  +${this.lastRewards.exp} EXP`
+          : ''
       );
 
       const showNext = won;
@@ -1029,20 +1511,51 @@ export class GameScene extends Phaser.Scene {
       if (showNext) {
         const next = getBossAppearance(this.profile.raidLevel);
         this.resultNextIcon.setText(next.icon);
-        this.resultNextName.setText(`Next: ${next.name}  ·  Lv ${this.profile.raidLevel}`);
+        this.resultNextName.setText(
+          `Next: ${next.name}  ·  Lv ${this.profile.raidLevel}`
+        );
       }
     }
   }
 
   private refreshHeroes() {
     if (!this.profile) return;
-    this.heroCardRefs.forEach(({ heroId, levelText, btnBg }) => {
-      const progress = getHeroProgress(this.profile!, heroId);
-      const ready    = canUpgradeHero(this.profile!, heroId);
-      levelText.setText(`${HEROES.find(h => h.id === heroId)?.role ?? ''} · Lv ${progress.level}`);
-      btnBg.setFillStyle(ready ? COLORS.btnPrimary : COLORS.btnDisabled);
-      ready ? btnBg.setInteractive({ useHandCursor: true }) : btnBg.disableInteractive();
-    });
+    const partySize = this.profile.party.length;
+    this.heroCardRefs.forEach(
+      ({ heroId, levelText, btnBg, partyBg, partyText }) => {
+        const progress = getHeroProgress(this.profile!, heroId);
+        const ready = canUpgradeHero(this.profile!, heroId);
+        const inParty = this.profile!.party.includes(heroId);
+        const canRemove = inParty && partySize > 1;
+        levelText.setText(
+          `${HEROES.find((h) => h.id === heroId)?.role ?? ''} · Lv ${progress.level}`
+        );
+        btnBg.setFillStyle(ready ? COLORS.btnPrimary : COLORS.btnDisabled);
+        ready
+          ? btnBg.setInteractive({ useHandCursor: true })
+          : btnBg.disableInteractive();
+
+        partyText.setText(
+          inParty
+            ? canRemove
+              ? 'Remove'
+              : 'In Party'
+            : partySize >= 5
+              ? 'Swap In'
+              : 'Add'
+        );
+        partyBg.setFillStyle(
+          inParty
+            ? canRemove
+              ? COLORS.btnGreen
+              : COLORS.btnDisabled
+            : COLORS.btnSkill
+        );
+        !inParty || canRemove
+          ? partyBg.setInteractive({ useHandCursor: true })
+          : partyBg.disableInteractive();
+      }
+    );
   }
 
   private refreshLoot() {
@@ -1060,25 +1573,48 @@ export class GameScene extends Phaser.Scene {
     items.forEach((item, i) => {
       const iy = i * 40;
       const ibg = this.add.graphics();
-      ibg.fillStyle(0xf5f5f4); ibg.fillRoundedRect(PAD, iy + PAD, W - PAD * 2, 36, 6);
+      ibg.fillStyle(0xf5f5f4);
+      ibg.fillRoundedRect(PAD, iy + PAD, W - PAD * 2, 36, 6);
       const nameT = this.add.text(PAD * 2.5, iy + PAD + 8, item.name, {
-        fontSize: '12px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
+        fontSize: '12px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#18181b',
       });
-      const bonusT = this.add.text(PAD * 2.5, iy + PAD + 22, `+${item.bonus} ${item.stat.toUpperCase()}`, {
-        fontSize: '10px', fontFamily: FONT.sans, color: '#71717a',
-      });
-      const rarT = this.add.text(W - PAD * 2.5, iy + PAD + 18, item.rarity, {
-        fontSize: '9px', fontStyle: 'bold', fontFamily: FONT.sans,
-        color: '#' + (RARITY_COLOR[item.rarity] ?? COLORS.rarityCommon).toString(16).padStart(6, '0'),
-      }).setOrigin(1, 0.5);
+      const bonusT = this.add.text(
+        PAD * 2.5,
+        iy + PAD + 22,
+        `+${item.bonus} ${item.stat.toUpperCase()}`,
+        {
+          fontSize: '10px',
+          fontFamily: FONT.sans,
+          color: '#71717a',
+        }
+      );
+      const rarT = this.add
+        .text(W - PAD * 2.5, iy + PAD + 18, item.rarity, {
+          fontSize: '9px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color:
+            '#' +
+            (RARITY_COLOR[item.rarity] ?? COLORS.rarityCommon)
+              .toString(16)
+              .padStart(6, '0'),
+        })
+        .setOrigin(1, 0.5);
       this.lootItemsGroup.add([ibg, nameT, bonusT, rarT]);
     });
 
     if (items.length === 0) {
       this.lootItemsGroup.add(
-        this.add.text(W / 2, 50, 'Clear raids to earn gear.', {
-          fontSize: '13px', fontFamily: FONT.sans, color: '#a1a1aa',
-        }).setOrigin(0.5)
+        this.add
+          .text(W / 2, 50, 'Clear raids to earn gear.', {
+            fontSize: '13px',
+            fontFamily: FONT.sans,
+            color: '#a1a1aa',
+          })
+          .setOrigin(0.5)
       );
     }
   }
@@ -1093,27 +1629,44 @@ export class GameScene extends Phaser.Scene {
     if (!hero || !this.profile) return;
 
     const progress = getHeroProgress(this.profile, heroId);
-    const stats    = getScaledStats(hero, progress.level);
-    const cost     = getUpgradeCost(progress.level);
-    const ready    = canUpgradeHero(this.profile, heroId);
+    const stats = getScaledStats(hero, progress.level);
+    const cost = getUpgradeCost(progress.level);
+    const ready = canUpgradeHero(this.profile, heroId);
 
-    this.detailCircle.setFillStyle(ROLE_COLOR[hero.role] ?? COLORS.warrior);
-    this.detailIconText.setText(hero.icon);
+    this.detailHeroIcon.setFrame(hero.spriteFrame);
     this.detailHeroName.setText(hero.name);
-    this.detailRoleLv.setText(`${hero.title} · ${hero.role} · Lv ${progress.level}`);
+    this.detailRoleLv.setText(
+      `${hero.title} · ${hero.role} · Lv ${progress.level}`
+    );
     this.detailRarityText.setColor(
-      '#' + (RARITY_COLOR[hero.rarity] ?? COLORS.rarityCommon).toString(16).padStart(6, '0')
+      '#' +
+        (RARITY_COLOR[hero.rarity] ?? COLORS.rarityCommon)
+          .toString(16)
+          .padStart(6, '0')
     );
     this.detailRarityText.setText(hero.rarity);
 
-    [stats.hp, stats.atk, stats.def, stats.mag, stats.res, stats.spd]
-      .forEach((v, i) => this.detailStatValues[i]?.setText(String(v)));
+    [stats.hp, stats.atk, stats.def, stats.mag, stats.res, stats.spd].forEach(
+      (v, i) => this.detailStatValues[i]?.setText(String(v))
+    );
 
-    this.detailSkillText.setText(`${hero.skill.name}\n${hero.skill.summary}`);
-    this.detailUltText.setText(`${hero.ultimate.name}\n${hero.ultimate.summary}`);
+    const currentSkill = getHeroSkillForLevel(hero, progress.level);
+    const nextSkill = getNextHeroSkillUnlock(hero, progress.level);
+    this.detailSkillText.setText(
+      `${currentSkill.name}\n${currentSkill.summary}${
+        nextSkill ? `\nLv ${nextSkill.level}: ${nextSkill.skill.name}` : ''
+      }`
+    );
+    this.detailUltText.setText(
+      `${hero.ultimate.name}\n${hero.ultimate.summary}`
+    );
     this.detailUpgradeBg.setFillStyle(ready ? COLORS.ink : COLORS.btnDisabled);
-    ready ? this.detailUpgradeBg.setInteractive({ useHandCursor: true }) : this.detailUpgradeBg.disableInteractive();
-    this.detailUpgradeText.setText(ready ? `Upgrade · ${cost} gold` : `Need ${cost} gold`);
+    ready
+      ? this.detailUpgradeBg.setInteractive({ useHandCursor: true })
+      : this.detailUpgradeBg.disableInteractive();
+    this.detailUpgradeText.setText(
+      ready ? `Upgrade · ${cost} gold` : `Need ${cost} gold`
+    );
 
     this.detailGroup.setVisible(true);
   }
@@ -1128,27 +1681,98 @@ export class GameScene extends Phaser.Scene {
   // ══════════════════════════════════════════════════════════════════════
 
   private handleAction(action: BattleAction) {
-    if (!this.profile || !this.battle || this.battle.status !== 'active') return;
+    if (!this.profile || !this.battle || this.battle.status !== 'active')
+      return;
     const activeHero = getActiveHero(this.battle);
 
     if (action === 'ultimate' && !canUseUltimate(activeHero)) return;
-    if (action === 'skill'    && !canUseSkill(activeHero))    return;
+    if (action === 'skill' && !canUseSkill(activeHero)) return;
 
     const prevHeroes = this.battle.heroes;
+    const prevHeroHps = prevHeroes.map((h) => h.hp);
     const nextBattle = resolveHeroAction(this.battle, action);
 
+    // Show hero attack effect on boss
+    if (activeHero) {
+      const frame =
+        GameScene.ROLE_EFFECT_FRAME[activeHero.role] ??
+        GameScene.ROLE_EFFECT_FRAME['Warrior']!;
+      this.spawnEffectSprite(frame, this.bossCX, this.bossCY);
+
+      // Shake boss image on hit
+      if (nextBattle.boss.hp < this.battle.boss.hp) {
+        this.tweens.add({
+          targets: this.bossImage,
+          x: { from: this.bossCX - 7, to: this.bossCX + 7 },
+          duration: 75,
+          ease: 'Sine.InOut',
+          yoyo: true,
+          repeat: 2,
+          onComplete: () => this.bossImage.setX(this.bossCX),
+        });
+      }
+    }
+
+    // Show boss attack effects on heroes that took damage
     nextBattle.heroes.forEach((nextHero, i) => {
       const prev = prevHeroes[i];
       if (!prev) return;
       const diff = Math.round(nextHero.hp) - Math.round(prev.hp);
       if (Math.abs(diff) < 1) return;
-      const isActorUlt = action === 'ultimate' && prev.id === (activeHero?.id ?? '');
-      this.spawnFloat(i, Math.abs(diff), diff < 0 ? (isActorUlt ? 'ultimate' : 'damage') : 'heal');
+
+      const isActorUlt =
+        action === 'ultimate' && prev.id === (activeHero?.id ?? '');
+      this.spawnFloat(
+        i,
+        Math.abs(diff),
+        diff < 0 ? (isActorUlt ? 'ultimate' : 'damage') : 'heal'
+      );
+
+      if (diff < 0 && prev.id !== activeHero?.id) {
+        // Boss hit this hero — show boss effect
+        const slot = this.heroSlots[i];
+        if (slot) {
+          const bossSpecial = nextBattle.boss.specialSkill;
+          const bossFrame = bossSpecial
+            ? (GameScene.BOSS_DEBUFF_FRAME[bossSpecial.effectType] ?? 7)
+            : 7; // default: big thunder for Thread Quake
+          this.spawnEffectSprite(bossFrame, slot.iconCX, slot.iconCY);
+        }
+      }
     });
+
+    // Show boss debuff effect if boss applied a status effect this turn
+    const newLog = nextBattle.logs[0];
+    const prevLog = this.battle.logs[0];
+    if (
+      newLog &&
+      prevLog &&
+      newLog.id !== prevLog.id &&
+      newLog.tone === 'boss' &&
+      nextBattle.boss.specialSkill &&
+      prevHeroHps.some(
+        (hp, i) => hp === (nextBattle.heroes[i]?.hp ?? hp)
+      )
+    ) {
+      const frame =
+        GameScene.BOSS_DEBUFF_FRAME[nextBattle.boss.specialSkill.effectType] ??
+        7;
+      this.heroSlots.forEach((slot, i) => {
+        if (nextBattle.heroes[i]?.hp ?? 0 > 0) {
+          this.time.delayedCall(i * 80, () =>
+            this.spawnEffectSprite(frame, slot.iconCX, slot.iconCY)
+          );
+        }
+      });
+    }
+
     if (action === 'ultimate' && activeHero) {
       const idx = this.battle.heroes.findIndex((h) => h.id === activeHero.id);
       const had = prevHeroes[idx]
-        ? Math.abs(Math.round(nextBattle.heroes[idx]?.hp ?? 0) - Math.round(prevHeroes[idx]!.hp)) >= 1
+        ? Math.abs(
+            Math.round(nextBattle.heroes[idx]?.hp ?? 0) -
+              Math.round(prevHeroes[idx]!.hp)
+          ) >= 1
         : false;
       if (!had) this.spawnFloat(idx, 0, 'ultimate');
     }
@@ -1160,11 +1784,46 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    // Battle ended — apply rewards and track level-ups
     const victory = nextBattle.status === 'won';
-    const rewards = createBattleRewards(nextBattle.totalDamage, victory, this.profile.inventory.length);
-    const nextProfile = applyBattleRewards(this.profile, rewards, nextBattle.totalDamage);
+    const prevLevels = Object.fromEntries(
+      this.profile.heroes.map((h) => [h.heroId, h.level])
+    );
+    const rewards = createBattleRewards(
+      nextBattle.totalDamage,
+      victory,
+      this.profile.inventory.length
+    );
+    const nextProfile = applyBattleRewards(
+      this.profile,
+      rewards,
+      nextBattle.totalDamage
+    );
     this.lastRewards = rewards;
     this.profile = nextProfile;
+
+    // Add level-up entries to battle log
+    const levelUpEntries: BattleLogEntry[] = [];
+    nextProfile.heroes.forEach((h) => {
+      const prev = prevLevels[h.heroId] ?? 1;
+      if (h.level > prev) {
+        const hero = HEROES.find((hero) => hero.id === h.heroId);
+        if (hero) {
+          levelUpEntries.push({
+            id: `levelup-${h.heroId}`,
+            tone: 'reward',
+            message: `⭐ ${hero.name} leveled up to Lv ${h.level}!`,
+          });
+        }
+      }
+    });
+    if (levelUpEntries.length > 0 && this.battle) {
+      this.battle = {
+        ...this.battle,
+        logs: [...levelUpEntries, ...this.battle.logs].slice(0, MAX_LOGS),
+      };
+    }
+
     void persistKeeperSave(nextProfile);
     this.refreshAll();
   }
@@ -1195,6 +1854,39 @@ export class GameScene extends Phaser.Scene {
     this.refreshAll();
   }
 
+  private handleToggleParty(heroId: string) {
+    if (!this.profile) return;
+
+    const currentParty =
+      this.profile.party.length > 0
+        ? this.profile.party
+        : HEROES.slice(0, 5).map((hero) => hero.id);
+    const inParty = currentParty.includes(heroId);
+    let nextParty = currentParty;
+
+    if (inParty) {
+      if (currentParty.length <= 1) return;
+      nextParty = currentParty.filter((id) => id !== heroId);
+    } else if (currentParty.length >= 5) {
+      nextParty = [...currentParty.slice(0, 4), heroId];
+    } else {
+      nextParty = [...currentParty, heroId];
+    }
+
+    const nextProfile = {
+      ...this.profile,
+      party: nextParty,
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.profile = nextProfile;
+    this.battle = createBattleState(nextProfile);
+    this.lastRewards = null;
+    this.resultGroup.setVisible(false);
+    void persistKeeperSave(nextProfile);
+    this.refreshAll();
+  }
+
   private handleUpgrade(heroId: string) {
     if (!this.profile) return;
     const result = upgradeHero(this.profile, heroId);
@@ -1211,15 +1903,61 @@ export class GameScene extends Phaser.Scene {
   // Combat effects
   // ══════════════════════════════════════════════════════════════════════
 
-  private spawnFloat(slotIndex: number, value: number, kind: 'damage' | 'heal' | 'ultimate') {
+  // Spritesheet layout: row 0=FIRE (0-3), row 1=THUNDER (4-7),
+  //                     row 2=BLIZZARD (8-11), row 3=SLASH/HIT (12-15)
+  private static readonly ROLE_EFFECT_FRAME: Record<string, number> = {
+    Tank: 14,     // starburst impact
+    Warrior: 12,  // red slash arc
+    Mage: 2,      // large flame
+    Ranger: 13,   // explosive slash arc
+    Healer: 5,    // thunder spark (light)
+    Support: 6,   // lightning bolt
+  };
+
+  private static readonly BOSS_DEBUFF_FRAME: Record<string, number> = {
+    berserk: 3,   // fire explosion
+    daze: 7,      // massive thunder
+    silence: 11,  // ice spike
+    confuse: 10,  // blizzard tornado
+    blind: 8,     // snowflake burst
+  };
+
+  private spawnEffectSprite(frame: number, x: number, y: number) {
+    if (!this.textures.exists(DAMAGE_EFFECT_KEY)) return;
+
+    const img = this.add
+      .image(x, y, DAMAGE_EFFECT_KEY, frame)
+      .setDisplaySize(144, 96)
+      .setOrigin(0.5)
+      .setDepth(16)
+      .setAlpha(0.88);
+
+    this.tweens.add({
+      targets: img,
+      alpha: 0,
+      scaleX: 1.5,
+      scaleY: 1.5,
+      duration: 500,
+      ease: 'Cubic.Out',
+      onComplete: () => img.destroy(),
+    });
+  }
+
+  private spawnFloat(
+    slotIndex: number,
+    value: number,
+    kind: 'damage' | 'heal' | 'ultimate'
+  ) {
     const slot = this.heroSlots[slotIndex];
     if (!slot) return;
 
-    const label  = kind === 'damage' ? `-${value}` : kind === 'heal' ? `+${value}` : '⚡';
-    const color  = kind === 'damage' ? '#ef4444'   : kind === 'heal' ? '#60a5fa'   : '#fbbf24';
+    const label =
+      kind === 'damage' ? `-${value}` : kind === 'heal' ? `+${value}` : '⚡';
+    const color =
+      kind === 'damage' ? '#ef4444' : kind === 'heal' ? '#60a5fa' : '#fbbf24';
 
     const floatText = this.add
-      .text(slot.iconCX, slot.iconCY - HERO_CIRCLE_R, label, {
+      .text(slot.iconCX, slot.iconCY - HERO_SPRITE_SIZE / 2, label, {
         fontSize: kind === 'ultimate' ? '18px' : '13px',
         fontStyle: 'bold',
         fontFamily: kind === 'ultimate' ? FONT.emoji : FONT.sans,
@@ -1232,7 +1970,7 @@ export class GameScene extends Phaser.Scene {
 
     this.tweens.add({
       targets: floatText,
-      y: slot.iconCY - HERO_CIRCLE_R - 40,
+      y: slot.iconCY - HERO_SPRITE_SIZE / 2 - 40,
       alpha: 0,
       duration: 1200,
       ease: 'Cubic.Out',
