@@ -1,6 +1,14 @@
 import { pickEquipmentReward } from '../data/equipment';
-import { HEROES, STARTER_PARTY, getHeroTemplate } from '../data/heroes';
+import {
+  HEROES,
+  STARTER_PARTY,
+  getHeroTemplate,
+  getNextRarity,
+  isMaxRarity,
+} from '../data/heroes';
+import { RAID_NODES } from '../data/raidBosses';
 import type {
+  HeroRarity,
   HeroProgress,
   HeroTemplate,
   PlayerSave,
@@ -12,6 +20,8 @@ const DAILY_GOLD = 140;
 const DAILY_GEMS = 30;
 const DAILY_ENERGY = 35;
 const LEVEL_CAP = 50;
+export const HERO_ROLL_GEM_COST = 80;
+const MAX_RAID_LEVEL = RAID_NODES.length;
 
 export const DAILY_REWARD = {
   gold: DAILY_GOLD,
@@ -26,10 +36,11 @@ export const createInitialPlayerSave = (username: string): PlayerSave => ({
   gems: 120,
   energy: 100,
   raidTokens: 0,
-  heroes: HEROES.map((hero, index) => ({
+  heroes: HEROES.filter((hero) => STARTER_PARTY.includes(hero.id)).map((hero) => ({
     heroId: hero.id,
-    level: index < 5 ? 4 : 1,
+    level: 4,
     exp: 0,
+    rarity: hero.rarity,
   })),
   party: STARTER_PARTY,
   inventory: [],
@@ -47,13 +58,20 @@ export const getHeroProgress = (
   const progress = save.heroes.find((hero) => hero.heroId === heroId);
 
   if (progress) return progress;
+  const template = getHeroTemplate(heroId);
 
   return {
     heroId,
     level: 1,
     exp: 0,
+    ...(template ? { rarity: template.rarity } : {}),
   };
 };
+
+export const getEffectiveHeroRarity = (
+  save: PlayerSave,
+  template: HeroTemplate
+): HeroRarity => getHeroProgress(save, template.id).rarity ?? template.rarity;
 
 export const getScaledStats = (
   template: HeroTemplate,
@@ -117,16 +135,31 @@ export const upgradeHero = (save: PlayerSave, heroId: string) => {
 export const createBattleRewards = (
   totalDamage: number,
   victory: boolean,
-  inventorySize: number
+  inventorySize: number,
+  battlesCleared = victory ? 1 : 0,
+  battleCount = 1
 ): RewardBundle => {
   const equipment = victory ? pickEquipmentReward(inventorySize) : null;
+  const clearRatio = battleCount > 0 ? battlesCleared / battleCount : 0;
+  const partialGemReward = Math.max(
+    2,
+    Math.round(3 + battlesCleared * 5 + totalDamage * 0.012)
+  );
 
   return {
-    gold: Math.max(35, Math.round(totalDamage * 0.26)) + (victory ? 160 : 0),
-    gems: victory ? 12 : 3,
-    energy: victory ? 8 : 3,
-    raidTokens: Math.max(1, Math.floor(totalDamage / 140)) + (victory ? 5 : 0),
-    exp: Math.max(16, Math.round(totalDamage * 0.08)) + (victory ? 44 : 0),
+    gold:
+      Math.max(35, Math.round(totalDamage * 0.25)) +
+      (victory ? 150 + battlesCleared * 25 : Math.round(50 * clearRatio)),
+    gems: victory
+      ? 12 + battlesCleared * 4
+      : partialGemReward,
+    energy: victory ? 8 : Math.max(2, Math.round(2 + clearRatio * 5)),
+    raidTokens:
+      Math.max(1, Math.floor(totalDamage / 140)) +
+      (victory ? 5 + battlesCleared : battlesCleared),
+    exp:
+      Math.max(16, Math.round(totalDamage * 0.08)) +
+      (victory ? 40 + battlesCleared * 8 : battlesCleared * 8),
     equipment: equipment ? [equipment] : [],
   };
 };
@@ -134,7 +167,11 @@ export const createBattleRewards = (
 export const applyBattleRewards = (
   save: PlayerSave,
   rewards: RewardBundle,
-  totalDamage: number
+  totalDamage: number,
+  options: {
+    victory: boolean;
+    raidLevel?: number;
+  } = { victory: true }
 ): PlayerSave => {
   const partyHeroIds = new Set(save.party);
   const updatedHeroes = save.heroes.map((hero) => {
@@ -157,6 +194,11 @@ export const applyBattleRewards = (
     };
   });
 
+  const completedNewestNode =
+    options.victory &&
+    typeof options.raidLevel === 'number' &&
+    options.raidLevel >= save.raidLevel;
+
   return {
     ...save,
     gold: save.gold + rewards.gold,
@@ -165,10 +207,85 @@ export const applyBattleRewards = (
     raidTokens: save.raidTokens + rewards.raidTokens,
     heroes: updatedHeroes,
     inventory: [...save.inventory, ...rewards.equipment],
-    raidLevel: save.raidLevel + 1,
+    raidLevel: completedNewestNode
+      ? Math.min(MAX_RAID_LEVEL + 1, options.raidLevel! + 1)
+      : save.raidLevel,
     totalRaidDamage: save.totalRaidDamage + totalDamage,
     bestRaidDamage: Math.max(save.bestRaidDamage, totalDamage),
     updatedAt: new Date().toISOString(),
+  };
+};
+
+export const rollHero = (save: PlayerSave) => {
+  if (save.gems < HERO_ROLL_GEM_COST) {
+    return {
+      save,
+      rolled: false,
+      message: `Need ${HERO_ROLL_GEM_COST} gems to recruit.`,
+    };
+  }
+
+  const template = HEROES[Math.floor(Math.random() * HEROES.length)] ?? HEROES[0]!;
+  const existing = save.heroes.find((hero) => hero.heroId === template.id);
+  const baseSave = {
+    ...save,
+    gems: save.gems - HERO_ROLL_GEM_COST,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (!existing) {
+    return {
+      save: {
+        ...baseSave,
+        heroes: [
+          ...save.heroes,
+          {
+            heroId: template.id,
+            level: 1,
+            exp: 0,
+            rarity: template.rarity,
+          },
+        ],
+      },
+      rolled: true,
+      hero: template,
+      message: `${template.name} joined the team.`,
+    };
+  }
+
+  const currentRarity = existing.rarity ?? template.rarity;
+
+  if (isMaxRarity(currentRarity)) {
+    const gold = 420;
+
+    return {
+      save: {
+        ...baseSave,
+        gold: baseSave.gold + gold,
+      },
+      rolled: true,
+      hero: template,
+      message: `${template.name} duplicate converted into ${gold} gold.`,
+    };
+  }
+
+  const nextRarity = getNextRarity(currentRarity);
+
+  return {
+    save: {
+      ...baseSave,
+      heroes: save.heroes.map((hero) =>
+        hero.heroId === template.id
+          ? {
+              ...hero,
+              rarity: nextRarity,
+            }
+          : hero
+      ),
+    },
+    rolled: true,
+    hero: template,
+    message: `${template.name} advanced to ${nextRarity}.`,
   };
 };
 

@@ -12,7 +12,8 @@ const isHeroProgress = (value: unknown): value is HeroProgress => {
   return (
     typeof value.heroId === 'string' &&
     typeof value.level === 'number' &&
-    typeof value.exp === 'number'
+    typeof value.exp === 'number' &&
+    (typeof value.rarity === 'string' || typeof value.rarity === 'undefined')
   );
 };
 

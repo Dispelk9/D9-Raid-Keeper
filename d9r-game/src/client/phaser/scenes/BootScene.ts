@@ -1,13 +1,19 @@
 import Phaser from 'phaser';
-import { BOSS_SPRITE_MAP } from '../../../shared/game/data/raidBosses';
+import { BOSS_SPRITE_MAP, SNOO_BOSS_RIGHT_KEY } from '../../../shared/game/data/raidBosses';
 import { COLORS, FONT, H, W } from '../constants';
 
 export const SNOO_LEFT_SHEET_KEY = 'snoo-heroes-left';
 export const SNOO_CENTER_SHEET_KEY = 'snoo-heroes-center';
+export const SNOO_FRAME_SHEET_KEY = 'snoo-dev-heroes-left-frame';
 export const SNOO_FRAME_SIZE = 512;
+export const HERO_POSE_FRAME_W = 192;
+export const HERO_POSE_FRAME_H = 170;
+export const HERO_POSE_LABEL_COLS = 1;
 export const HUD_KEY = 'ff-hud';
 export const DAMAGE_EFFECT_KEY = 'damage-effect';
-export const DAMAGE_EFFECT_FRAME_W = 384;
+export const TITLE_SCREEN_KEY = 'title-screen';
+// Damage_effect.png is 1536×1024 → 6 cols × 4 rows of 256×256 frames
+export const DAMAGE_EFFECT_FRAME_W = 256;
 export const DAMAGE_EFFECT_FRAME_H = 256;
 
 export class BootScene extends Phaser.Scene {
@@ -61,7 +67,7 @@ export class BootScene extends Phaser.Scene {
     // ── Snoo hero spritesheets (6 frames at 512×512, 3 cols × 2 rows) ────
     this.load.spritesheet(
       SNOO_LEFT_SHEET_KEY,
-      '/assets/sprites/Snoo_heroes_left.png',
+      '/assets/sprites/Snoo_dev_heroes_left.png',
       {
         frameWidth: SNOO_FRAME_SIZE,
         frameHeight: SNOO_FRAME_SIZE,
@@ -70,12 +76,19 @@ export class BootScene extends Phaser.Scene {
 
     this.load.spritesheet(
       SNOO_CENTER_SHEET_KEY,
-      '/assets/sprites/Snoo_heroes_center.png',
+      '/assets/sprites/Snoo_dev_heroes_left.png',
       {
         frameWidth: SNOO_FRAME_SIZE,
         frameHeight: SNOO_FRAME_SIZE,
       }
     );
+
+    this.load.image(
+      SNOO_FRAME_SHEET_KEY,
+      '/assets/sprites/Snoo_dev_heroes_left_frame.png'
+    );
+
+    this.load.image(TITLE_SCREEN_KEY, '/assets/screens/title_screen.png');
 
     // ── Battle background ─────────────────────────────────────────────────
     this.load.image(
@@ -92,6 +105,13 @@ export class BootScene extends Phaser.Scene {
       this.load.image(key, `/${path}`);
     });
 
+    // ── Snoo boss spritesheet (3 cols × 2 rows @ 512×512) ────────────────
+    this.load.spritesheet(
+      SNOO_BOSS_RIGHT_KEY,
+      '/assets/sprites/bosses/Snoo_bosses_right.png',
+      { frameWidth: SNOO_FRAME_SIZE, frameHeight: SNOO_FRAME_SIZE }
+    );
+
     // ── Combat damage effects spritesheet (4 cols × 4 rows) ──────────────
     this.load.spritesheet(DAMAGE_EFFECT_KEY, '/assets/effects/Damage_effect.png', {
       frameWidth: DAMAGE_EFFECT_FRAME_W,
@@ -100,11 +120,12 @@ export class BootScene extends Phaser.Scene {
   }
 
   create() {
-    // Apply nearest-neighbour filter to pixel art textures only — keeps text smooth
+    // Apply nearest-neighbour filter to pixel art textures only
     const nearest = Phaser.Textures.FilterMode.NEAREST;
     Object.keys(BOSS_SPRITE_MAP).forEach((key) => {
       this.textures.get(key).setFilter(nearest);
     });
+    this.textures.get(SNOO_BOSS_RIGHT_KEY).setFilter(nearest);
 
     this.scene.start('Game');
   }

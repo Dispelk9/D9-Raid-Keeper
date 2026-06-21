@@ -426,12 +426,18 @@ export const App = () => {
       const rewards = createBattleRewards(
         nextBattle.totalDamage,
         victory,
-        profile.inventory.length
+        profile.inventory.length,
+        victory ? 1 : 0,
+        1
       );
       const nextProfile = applyBattleRewards(
         profile,
         rewards,
-        nextBattle.totalDamage
+        nextBattle.totalDamage,
+        {
+          victory,
+          raidLevel: profile.raidLevel,
+        }
       );
 
       setLastRewards(rewards);

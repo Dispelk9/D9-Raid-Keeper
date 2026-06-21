@@ -1,0 +1,49 @@
+name: Deploy to Devvit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'd9r-game/**'     # only trigger when game code changes
+  workflow_dispatch:       # allow manual runs from the GitHub Actions tab
+
+jobs:
+  deploy:
+    name: Type-check, lint, upload
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: d9r-game
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: d9r-game/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Restore the two files that `devvit login` writes locally.
+      # Store their raw contents as GitHub secrets:
+      #   DEVVIT_TOKEN      ← cat ~/.devvit/token
+      #   DEVVIT_SESSION_ID ← cat ~/.devvit/session-id
+      - name: Restore Devvit credentials
+        run: |
+          mkdir -p ~/.devvit
+          printf '%s' "${{ secrets.DEVVIT_TOKEN }}" > ~/.devvit/token
+          printf '%s' "${{ secrets.DEVVIT_SESSION_ID }}" > ~/.devvit/session-id
+
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Upload to Devvit
+        run: npx devvit upload --no-interactive

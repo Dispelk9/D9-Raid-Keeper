@@ -4,10 +4,9 @@ import {
   getHeroTemplate,
 } from '../data/heroes';
 import {
-  RAID_BOSS_TEMPLATE,
   getBossAppearance,
-  isEliteBoss,
-  getEliteSkill,
+  getBossTemplate,
+  getRaidNode,
 } from '../data/raidBosses';
 import { getHeroProgress, getPartyPower, getScaledStats } from './progression';
 import type {
@@ -30,6 +29,13 @@ const MIN_CRIT_CHANCE = 0.04;
 const MAX_CRIT_CHANCE = 0.3;
 
 type BattleCombatant = Pick<BattleHero | RaidBoss, 'spd' | 'statusEffects'>;
+
+type CreateBattleStateOptions = {
+  raidLevel?: number;
+  bossId?: string;
+  encounterIndex?: number;
+  encounterCount?: number;
+};
 
 const createLogEntry = (
   message: string,
@@ -203,7 +209,7 @@ const buildBattleHero = (
     name: template.name,
     title: template.title,
     role: template.role,
-    rarity: template.rarity,
+    rarity: progress.rarity ?? template.rarity,
     icon: template.icon,
     spriteFrame: template.spriteFrame,
     level: progress.level,
@@ -222,38 +228,56 @@ const buildBattleHero = (
   };
 };
 
-const createRaidBoss = (save: PlayerSave): RaidBoss => {
+const createRaidBoss = (
+  save: PlayerSave,
+  options: CreateBattleStateOptions = {}
+): RaidBoss => {
   const powerBonus = Math.max(0, Math.round(getPartyPower(save) * 0.38));
-  const raidLevel = Math.max(1, save.raidLevel);
-  const levelMultiplier = 1 + (raidLevel - 1) * 0.1;
-  const elite = isEliteBoss(raidLevel);
-  const eliteMultiplier = elite ? 1.3 : 1;
+  const raidLevel = Math.max(1, options.raidLevel ?? save.raidLevel);
+  const encounterIndex = Math.max(1, options.encounterIndex ?? 1);
+  const encounterCount = Math.max(1, options.encounterCount ?? 1);
+  const node = getRaidNode(raidLevel);
+  const bossTemplate = getBossTemplate(options.bossId ?? node.bossId);
+  const levelMultiplier = 1 + (raidLevel - 1) * 0.16 + (encounterIndex - 1) * 0.08;
+  const finalEncounterMultiplier = encounterIndex >= encounterCount ? 1.18 : 1;
   const maxHp = Math.round(
-    (RAID_BOSS_TEMPLATE.hp + powerBonus) * levelMultiplier * eliteMultiplier
+    (bossTemplate.stats.hp + powerBonus) *
+      levelMultiplier *
+      finalEncounterMultiplier
   );
-  const appearance = getBossAppearance(raidLevel);
+  const appearance = getBossAppearance(raidLevel, bossTemplate.id);
+  const encounterLabel =
+    encounterCount > 1 ? ` · ${encounterIndex}/${encounterCount}` : '';
 
   return {
-    id: `${RAID_BOSS_TEMPLATE.id}-lv${raidLevel}`,
+    id: `${bossTemplate.id}-lv${raidLevel}-${encounterIndex}`,
     name: appearance.name,
-    title: `${appearance.title} · Lv ${raidLevel}`,
+    title: `${appearance.title} · Lv ${raidLevel}${encounterLabel}`,
     icon: appearance.icon,
     spriteKey: appearance.spriteKey,
+    ...(typeof appearance.spriteFrame === 'number'
+      ? { spriteFrame: appearance.spriteFrame }
+      : {}),
     maxHp,
     hp: maxHp,
-    atk: Math.round(RAID_BOSS_TEMPLATE.atk * levelMultiplier * eliteMultiplier),
-    def: Math.round(RAID_BOSS_TEMPLATE.def * (1 + (raidLevel - 1) * 0.06)),
-    mag: Math.round(RAID_BOSS_TEMPLATE.mag * levelMultiplier * eliteMultiplier),
-    res: Math.round(RAID_BOSS_TEMPLATE.res * (1 + (raidLevel - 1) * 0.06)),
-    spd: RAID_BOSS_TEMPLATE.spd,
-    countdown: RAID_BOSS_TEMPLATE.countdown,
+    atk: Math.round(bossTemplate.stats.atk * levelMultiplier),
+    def: Math.round(bossTemplate.stats.def * (1 + (raidLevel - 1) * 0.08)),
+    mag: Math.round(bossTemplate.stats.mag * levelMultiplier),
+    res: Math.round(bossTemplate.stats.res * (1 + (raidLevel - 1) * 0.08)),
+    spd: bossTemplate.stats.spd,
+    countdown: bossTemplate.stats.countdown,
     statusEffects: [],
-    isElite: elite,
-    specialSkill: elite ? getEliteSkill(raidLevel) : undefined,
+    isElite: encounterIndex >= encounterCount || raidLevel >= 4,
+    ...(bossTemplate.specialSkill
+      ? { specialSkill: bossTemplate.specialSkill }
+      : {}),
   };
 };
 
-export const createBattleState = (save: PlayerSave): BattleState => {
+export const createBattleState = (
+  save: PlayerSave,
+  options: CreateBattleStateOptions = {}
+): BattleState => {
   const partyIds = save.party.length > 0 ? save.party : STARTER_PARTY;
   const heroes = partyIds
     .map((heroId) => buildBattleHero(save, heroId))
@@ -263,13 +287,19 @@ export const createBattleState = (save: PlayerSave): BattleState => {
   return {
     status: 'active',
     heroes,
-    boss: createRaidBoss(save),
+    boss: createRaidBoss(save, options),
     activeHeroIndex: 0,
     round: 1,
     totalDamage: 0,
     logs: [
-      createLogEntry('Raid gate opened. Snoo Prime is charging.', 'system'),
+      createLogEntry(
+        `Raid node ${options.raidLevel ?? save.raidLevel} opened. Keep the team off the layoff list.`,
+        'system'
+      ),
     ],
+    raidLevel: Math.max(1, options.raidLevel ?? save.raidLevel),
+    encounterIndex: Math.max(1, options.encounterIndex ?? 1),
+    encounterCount: Math.max(1, options.encounterCount ?? 1),
   };
 };
 
@@ -495,6 +525,8 @@ const chooseBossTarget = (heroes: BattleHero[]) => {
   return getLowestAlly(heroes);
 };
 
+// ── Boss attack helpers (no hero-index advancement, no tick) ──────────────
+
 const resolveEliteBossSkill = (state: BattleState): BattleState => {
   const skill = state.boss.specialSkill!;
   const living = state.heroes.filter((h) => h.hp > 0);
@@ -516,39 +548,29 @@ const resolveEliteBossSkill = (state: BattleState): BattleState => {
 
   const heroes = state.heroes.map((hero) => {
     if (!targets.some((t) => t?.id === hero.id)) return hero;
-    return {
-      ...hero,
-      statusEffects: addStatusEffect(hero.statusEffects, statusEffect),
-    };
+    return { ...hero, statusEffects: addStatusEffect(hero.statusEffects, statusEffect) };
   });
 
   const targetLabel =
-    skill.target === 'party'
-      ? 'the whole party'
-      : (targets[0]?.name ?? 'a hero');
+    skill.target === 'party' ? 'the whole party' : (targets[0]?.name ?? 'a hero');
   const logMsg = `${state.boss.name} used ${skill.icon} ${skill.name} on ${targetLabel}!`;
-
   const status = heroes.every((h) => h.hp <= 0) ? 'lost' : 'active';
-  const nextIndex = getNextLivingHeroIndex(heroes, state.activeHeroIndex);
 
-  return tickBattleEffects({
+  return {
     ...state,
     status,
     heroes,
     boss: { ...state.boss, countdown: 4 },
-    activeHeroIndex: nextIndex < 0 ? state.activeHeroIndex : nextIndex,
-    round: nextIndex <= state.activeHeroIndex ? state.round + 1 : state.round,
     logs: addLog(state.logs, logMsg, 'boss'),
-  });
+  };
 };
 
-const resolveBossTurn = (state: BattleState): BattleState => {
+// Single boss attack — does NOT advance hero index or tick status effects
+const resolveSingleBossAttack = (state: BattleState): BattleState => {
   if (state.status !== 'active') return state;
 
-  const specialAttack = state.boss.countdown <= 1;
-
-  if (specialAttack) {
-    if (state.boss.isElite && state.boss.specialSkill) {
+  if (state.boss.countdown <= 1) {
+    if (state.boss.specialSkill) {
       return resolveEliteBossSkill(state);
     }
 
@@ -557,97 +579,77 @@ const resolveBossTurn = (state: BattleState): BattleState => {
     let crits = 0;
     const heroes = state.heroes.map((hero) => {
       if (hero.hp <= 0) return hero;
-
-      const missed =
-        Math.random() < getMissChance(state.boss, hero, BOSS_SPECIAL_SKILL);
-
-      if (missed) {
-        misses += 1;
-        return hero;
-      }
-
-      const critical =
-        Math.random() < getCritChance(state.boss, BOSS_SPECIAL_SKILL);
+      const missed = Math.random() < getMissChance(state.boss, hero, BOSS_SPECIAL_SKILL);
+      if (missed) { misses += 1; return hero; }
+      const critical = Math.random() < getCritChance(state.boss, BOSS_SPECIAL_SKILL);
       if (critical) crits += 1;
-
-      const finalDamage = Math.round(
-        Math.max(8, damage - hero.res * 0.25) * (critical ? 1.45 : 1)
-      );
-
-      return {
-        ...hero,
-        hp: Math.max(0, hero.hp - finalDamage),
-      };
+      const finalDamage = Math.round(Math.max(8, damage - hero.res * 0.25) * (critical ? 1.45 : 1));
+      return { ...hero, hp: Math.max(0, hero.hp - finalDamage) };
     });
-    const status = heroes.every((hero) => hero.hp <= 0) ? 'lost' : 'active';
-    const nextIndex = getNextLivingHeroIndex(heroes, state.activeHeroIndex);
+    const status = heroes.every((h) => h.hp <= 0) ? 'lost' : 'active';
     const suffix =
       misses > 0 || crits > 0
         ? ` (${misses} miss${misses === 1 ? '' : 'es'}${crits > 0 ? `, ${crits} crit` : ''})`
         : '';
-
-    return tickBattleEffects({
+    return {
       ...state,
       status,
       heroes,
-      boss: {
-        ...state.boss,
-        countdown: 4,
-      },
-      activeHeroIndex: nextIndex < 0 ? state.activeHeroIndex : nextIndex,
-      round: nextIndex <= state.activeHeroIndex ? state.round + 1 : state.round,
-      logs: addLog(
-        state.logs,
-        `${state.boss.name} cast Thread Quake${suffix}.`,
-        'boss'
-      ),
-    });
-  }
-
-  const target = chooseBossTarget(state.heroes);
-
-  if (!target) {
-    return {
-      ...state,
-      status: 'lost',
-      logs: addLog(state.logs, 'The party fell before the raid boss.', 'boss'),
+      boss: { ...state.boss, countdown: 4 },
+      logs: addLog(state.logs, `${state.boss.name} cast Thread Quake${suffix}.`, 'boss'),
     };
   }
 
-  const missed =
-    Math.random() < getMissChance(state.boss, target, BOSS_ATTACK_SKILL);
-  const critical =
-    !missed && Math.random() < getCritChance(state.boss, BOSS_ATTACK_SKILL);
-  const baseDamage = missed
-    ? 0
-    : getDamage(state.boss.atk, target.def, BOSS_ATTACK_SKILL.power, 8);
+  const target = chooseBossTarget(state.heroes);
+  if (!target) {
+    return { ...state, status: 'lost', logs: addLog(state.logs, 'The party fell.', 'boss') };
+  }
+
+  const missed = Math.random() < getMissChance(state.boss, target, BOSS_ATTACK_SKILL);
+  const critical = !missed && Math.random() < getCritChance(state.boss, BOSS_ATTACK_SKILL);
+  const baseDamage = missed ? 0 : getDamage(state.boss.atk, target.def, BOSS_ATTACK_SKILL.power, 8);
   const damage = critical ? Math.round(baseDamage * 1.45) : baseDamage;
   const heroes = state.heroes.map((hero) =>
-    hero.id === target.id && !missed
-      ? {
-          ...hero,
-          hp: Math.max(0, hero.hp - damage),
-        }
-      : hero
+    hero.id === target.id && !missed ? { ...hero, hp: Math.max(0, hero.hp - damage) } : hero
   );
-  const status = heroes.every((hero) => hero.hp <= 0) ? 'lost' : 'active';
-  const nextIndex = getNextLivingHeroIndex(heroes, state.activeHeroIndex);
+  const status = heroes.every((h) => h.hp <= 0) ? 'lost' : 'active';
   const logMessage = missed
     ? `${state.boss.name} missed ${target.name}.`
     : `${state.boss.name} hit ${target.name} for ${damage}${critical ? ' CRIT' : ''}.`;
 
-  return tickBattleEffects({
+  return {
     ...state,
     status,
     heroes,
-    boss: {
-      ...state.boss,
-      countdown: state.boss.countdown - 1,
-    },
-    activeHeroIndex: nextIndex < 0 ? state.activeHeroIndex : nextIndex,
-    round: nextIndex <= state.activeHeroIndex ? state.round + 1 : state.round,
+    boss: { ...state.boss, countdown: state.boss.countdown - 1 },
     logs: addLog(state.logs, logMessage, 'boss'),
-  });
+  };
+};
+
+// Boss phase: 1–3 attacks (weighted), then tick effects once per round
+const resolveBossTurnPhase = (state: BattleState): BattleState => {
+  if (state.status !== 'active') return state;
+  const roll = Math.random();
+  const numAttacks = roll < 0.50 ? 1 : roll < 0.82 ? 2 : 3;
+  let current = state;
+  for (let i = 0; i < numAttacks && current.status === 'active'; i++) {
+    current = resolveSingleBossAttack(current);
+  }
+  return tickBattleEffects(current);
+};
+
+// Advance to the next living hero; if the round ended, trigger the boss phase
+const advanceHeroAndMaybeBoss = (state: BattleState): BattleState => {
+  if (state.status !== 'active') return state;
+  const nextIndex = getNextLivingHeroIndex(state.heroes, state.activeHeroIndex);
+  if (nextIndex < 0) return { ...state, status: 'lost' };
+  const isRoundEnd = nextIndex <= state.activeHeroIndex;
+  const advanced: BattleState = {
+    ...state,
+    activeHeroIndex: nextIndex,
+    round: isRoundEnd ? state.round + 1 : state.round,
+  };
+  return isRoundEnd ? resolveBossTurnPhase(advanced) : advanced;
 };
 
 export const resolveHeroAction = (
@@ -659,24 +661,13 @@ export const resolveHeroAction = (
   const actor = state.heroes[state.activeHeroIndex];
 
   if (!actor || actor.hp <= 0) {
-    const nextIndex = getNextLivingHeroIndex(
-      state.heroes,
-      state.activeHeroIndex
-    );
-
-    return {
-      ...state,
-      activeHeroIndex: nextIndex < 0 ? state.activeHeroIndex : nextIndex,
-    };
+    return advanceHeroAndMaybeBoss(state);
   }
 
-  // Debuff: Daze — skip this hero's turn entirely
+  // Debuff: Daze — skip this hero's turn
   if (actor.statusEffects.some((e) => e.effectType === 'daze')) {
-    const nextIndex = getNextLivingHeroIndex(state.heroes, state.activeHeroIndex);
-    return resolveBossTurn({
+    return advanceHeroAndMaybeBoss({
       ...state,
-      activeHeroIndex: nextIndex < 0 ? state.activeHeroIndex : nextIndex,
-      round: nextIndex <= state.activeHeroIndex ? state.round + 1 : state.round,
       logs: addLog(state.logs, `${actor.name} is dazed and loses their turn!`, 'system'),
     });
   }
@@ -693,7 +684,6 @@ export const resolveHeroAction = (
     preLog = addLog(preLog, `${actor.name} is ${reason}! Falls back to basic attack.`, 'system');
   }
 
-  // Enforce skill cooldown — fall back to basic attack if on cooldown
   const effectiveAction: BattleAction = forcedToAttack
     ? 'attack'
     : action === 'skill' && actor.skillCooldown > 0
@@ -709,7 +699,6 @@ export const resolveHeroAction = (
       ? resolveHeal(stateWithLog, actor, skill, effectiveAction)
       : resolveHeroStrike(stateWithLog, actor, skill, effectiveAction);
 
-  // Apply cooldown update to the actor in the resulting state
   const afterCooldown = {
     ...afterHero,
     heroes: afterHero.heroes.map((hero) =>
@@ -717,7 +706,9 @@ export const resolveHeroAction = (
     ),
   };
 
-  return resolveBossTurn(afterCooldown);
+  if (afterCooldown.status !== 'active') return afterCooldown;
+
+  return advanceHeroAndMaybeBoss(afterCooldown);
 };
 
 export const getActiveHero = (state: BattleState) =>

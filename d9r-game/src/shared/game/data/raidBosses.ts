@@ -1,86 +1,128 @@
-import type { BossSpecialSkill } from '../types';
+import type { RaidBossTemplate, RaidNode } from '../types';
+import { cco } from './bosses/cco';
+import { directorOfEngineering } from './bosses/directorOfEngineering';
+import { engineeringManager } from './bosses/engineeringManager';
+import { productOwner } from './bosses/productOwner';
+import { projectManager } from './bosses/projectManager';
+import { techLead } from './bosses/techLead';
+
+export const SNOO_BOSS_RIGHT_KEY = 'snoo-bosses-right';
+
+export const RAID_BOSSES: RaidBossTemplate[] = [
+  productOwner,
+  projectManager,
+  techLead,
+  engineeringManager,
+  directorOfEngineering,
+  cco,
+];
+
+export const RAID_NODES: RaidNode[] = [
+  {
+    id: 'node-product-owner',
+    level: 1,
+    bossId: productOwner.id,
+    name: productOwner.name,
+    title: 'Backlog Gate',
+    summary: 'Defend the team from scope creep and impossible acceptance criteria.',
+    minBattles: 1,
+    maxBattles: 2,
+  },
+  {
+    id: 'node-project-manager',
+    level: 2,
+    bossId: projectManager.id,
+    name: projectManager.name,
+    title: 'Deadline Stairwell',
+    summary: 'Break through status meetings before the sprint collapses.',
+    minBattles: 2,
+    maxBattles: 3,
+  },
+  {
+    id: 'node-tech-lead',
+    level: 3,
+    bossId: techLead.id,
+    name: techLead.name,
+    title: 'Architecture Review',
+    summary: 'Win the design debate and keep the release alive.',
+    minBattles: 2,
+    maxBattles: 3,
+  },
+  {
+    id: 'node-engineering-manager',
+    level: 4,
+    bossId: engineeringManager.id,
+    name: engineeringManager.name,
+    title: 'Performance Calibration',
+    summary: 'Shield the team from stack ranking and surprise action plans.',
+    minBattles: 3,
+    maxBattles: 4,
+  },
+  {
+    id: 'node-director',
+    level: 5,
+    bossId: directorOfEngineering.id,
+    name: directorOfEngineering.name,
+    title: 'Reorg War Room',
+    summary: 'Undo the reorg maze and rescue future teams from the layoff queue.',
+    minBattles: 3,
+    maxBattles: 4,
+  },
+  {
+    id: 'node-cco',
+    level: 6,
+    bossId: cco.id,
+    name: cco.name,
+    title: 'Executive Cost Summit',
+    summary: 'Face the layoff algorithm and free thousands of future employees.',
+    minBattles: 4,
+    maxBattles: 5,
+  },
+];
 
 type BossAppearance = {
+  id: string;
   name: string;
   title: string;
   icon: string;
   spriteKey: string;
+  spriteFrame?: number;
 };
 
-// 10 bosses ordered by difficulty — one new sprite unlocks every ~3 raid levels
-export const getBossAppearance = (raidLevel: number): BossAppearance => {
-  if (raidLevel <= 2)  return { name: 'Goo Spawner',     title: 'Primordial Ooze',    icon: '🟢', spriteKey: 'boss-goo'        };
-  if (raidLevel <= 4)  return { name: 'Talon Hawk',       title: 'Sky Predator',       icon: '🦅', spriteKey: 'boss-bird'       };
-  if (raidLevel <= 7)  return { name: 'Flame Beast',      title: 'Infernal Salamander',icon: '🔥', spriteKey: 'boss-salamander' };
-  if (raidLevel <= 10) return { name: 'Shell Knight',     title: 'Armored Warlord',    icon: '🛡️', spriteKey: 'boss-shello'     };
-  if (raidLevel <= 13) return { name: 'Corsair Captain',  title: 'Pirate Overlord',    icon: '🏴', spriteKey: 'boss-pirate'     };
-  if (raidLevel <= 16) return { name: 'Dark Witch',       title: 'Hex Mistress',       icon: '🧙', spriteKey: 'boss-witch'      };
-  if (raidLevel <= 20) return { name: 'Wailing Prince',   title: 'Undead Sovereign',   icon: '💀', spriteKey: 'boss-prince'     };
-  if (raidLevel <= 24) return { name: 'Laser Drone',      title: 'Autonomous Weapon',  icon: '🤖', spriteKey: 'boss-drone'      };
-  if (raidLevel <= 28) return { name: 'Scout Machine',    title: 'Recon Spider',       icon: '🕷️', spriteKey: 'boss-scout'      };
-  return               { name: 'Shadow Outlaw',    title: 'Primordial Entity',  icon: '☠️', spriteKey: 'boss-outlaw'     };
+export const BOSS_SPRITE_MAP: Record<string, string> = {};
+
+export const getBossTemplate = (bossId: string) =>
+  RAID_BOSSES.find((boss) => boss.id === bossId) ?? RAID_BOSSES[0]!;
+
+export const getRaidNode = (raidLevel: number) =>
+  RAID_NODES.find((node) => node.level === raidLevel) ??
+  RAID_NODES[RAID_NODES.length - 1]!;
+
+export const getRaidNodeByBossId = (bossId: string) =>
+  RAID_NODES.find((node) => node.bossId === bossId) ?? RAID_NODES[0]!;
+
+export const getBossAppearance = (
+  raidLevel: number,
+  bossId = getRaidNode(raidLevel).bossId
+): BossAppearance => {
+  const boss = getBossTemplate(bossId);
+
+  return {
+    id: boss.id,
+    name: boss.name,
+    title: boss.title,
+    icon: boss.icon,
+    spriteKey: boss.spriteKey,
+    ...(typeof boss.spriteFrame === 'number'
+      ? { spriteFrame: boss.spriteFrame }
+      : {}),
+  };
 };
 
-// All boss texture keys → sprite file mapping (used in BootScene to preload)
-export const BOSS_SPRITE_MAP: Record<string, string> = {
-  'boss-goo':        'assets/sprites/bosses/World01_001_GreenGoo.png',
-  'boss-bird':       'assets/sprites/bosses/World01_003_Bird.png',
-  'boss-salamander': 'assets/sprites/bosses/World01_002_Salamander.png',
-  'boss-shello':     'assets/sprites/bosses/World01_005_Shello.png',
-  'boss-pirate':     'assets/sprites/bosses/World01_007_Pirate.png',
-  'boss-witch':      'assets/sprites/bosses/World01_006_Witch.png',
-  'boss-prince':     'assets/sprites/bosses/World01_004_WailingPrince.png',
-  'boss-drone':      'assets/sprites/bosses/World04_001_ LaserDrone.png',
-  'boss-scout':      'assets/sprites/bosses/World04_002_ ScoutMachine.png',
-  'boss-outlaw':     'assets/sprites/bosses/World04_003_ Outlaw.png',
-};
+export const isEliteBoss = (raidLevel: number): boolean => raidLevel >= 4;
 
-// Elite bosses appear every 5 levels starting at level 5
-export const isEliteBoss = (raidLevel: number): boolean =>
-  raidLevel >= 5 && raidLevel % 5 === 0;
-
-const ELITE_SKILLS: BossSpecialSkill[] = [
-  {
-    name: 'Blinding Flash',
-    icon: '👁️',
-    effectType: 'blind',
-    target: 'party',
-    duration: 3,
-  },
-  {
-    name: 'Mind Warp',
-    icon: '🌀',
-    effectType: 'confuse',
-    target: 'single',
-    duration: 2,
-  },
-  {
-    name: 'Blood Rage',
-    icon: '🔴',
-    effectType: 'berserk',
-    target: 'single',
-    duration: 2,
-  },
-  {
-    name: 'Void Silence',
-    icon: '🔇',
-    effectType: 'silence',
-    target: 'party',
-    duration: 2,
-  },
-  {
-    name: 'Concussion',
-    icon: '💫',
-    effectType: 'daze',
-    target: 'single',
-    duration: 1,
-  },
-];
-
-export const getEliteSkill = (raidLevel: number): BossSpecialSkill => {
-  const idx = (Math.floor(raidLevel / 5) - 1) % ELITE_SKILLS.length;
-  return ELITE_SKILLS[idx] ?? ELITE_SKILLS[0]!;
-};
+export const getEliteSkill = (raidLevel: number) =>
+  getBossTemplate(getRaidNode(raidLevel).bossId).specialSkill;
 
 export const RAID_BOSS_TEMPLATE = {
   id: 'raid-boss',

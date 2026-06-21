@@ -40,6 +40,16 @@ export type HeroSkillUnlock = {
   skill: HeroSkill;
 };
 
+export type HeroPose =
+  | 'idle'
+  | 'walk1'
+  | 'walk2'
+  | 'attack'
+  | 'cast'
+  | 'hit'
+  | 'ko'
+  | 'victory';
+
 export type BossSpecialEffectType =
   | 'confuse'
   | 'blind'
@@ -83,6 +93,7 @@ export type HeroProgress = {
   heroId: string;
   level: number;
   exp: number;
+  rarity?: HeroRarity;
 };
 
 export type EquipmentItem = {
@@ -109,6 +120,30 @@ export type PlayerSave = {
   bestRaidDamage: number;
   dailyClaimedAt: string | null;
   updatedAt: string;
+};
+
+export type RaidNode = {
+  id: string;
+  level: number;
+  bossId: string;
+  name: string;
+  title: string;
+  summary: string;
+  minBattles: number;
+  maxBattles: number;
+};
+
+export type RaidBossTemplate = {
+  id: string;
+  name: string;
+  title: string;
+  icon: string;
+  spriteKey: string;
+  spriteFrame?: number;
+  stats: StatBlock & {
+    countdown: number;
+  };
+  specialSkill?: BossSpecialSkill;
 };
 
 export type RewardBundle = {
@@ -149,6 +184,7 @@ export type RaidBoss = {
   title: string;
   icon: string;
   spriteKey: string;
+  spriteFrame?: number;
   maxHp: number;
   hp: number;
   atk: number;
@@ -178,6 +214,9 @@ export type BattleState = {
   round: number;
   totalDamage: number;
   logs: BattleLogEntry[];
+  raidLevel: number;
+  encounterIndex: number;
+  encounterCount: number;
 };
 
 export type BattleAction = 'attack' | 'skill' | 'ultimate';

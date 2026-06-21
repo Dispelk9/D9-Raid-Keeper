@@ -3,9 +3,13 @@ import { context } from '@devvit/web/client';
 import { COLORS, FONT, H, HEADER_H, PAD, RARITY_COLOR, W } from '../constants';
 import {
   DAMAGE_EFFECT_KEY,
+  HERO_POSE_FRAME_H,
+  HERO_POSE_FRAME_W,
+  HERO_POSE_LABEL_COLS,
   HUD_KEY,
   SNOO_CENTER_SHEET_KEY,
-  SNOO_LEFT_SHEET_KEY,
+  SNOO_FRAME_SHEET_KEY,
+  TITLE_SCREEN_KEY,
 } from './BootScene';
 import { loadKeeperSave, persistKeeperSave } from '../../keeper/api';
 import {
@@ -13,17 +17,25 @@ import {
   getHeroSkillForLevel,
   getNextHeroSkillUnlock,
 } from '../../../shared/game/data/heroes';
-import { getBossAppearance } from '../../../shared/game/data/raidBosses';
+import {
+  RAID_NODES,
+  getBossAppearance,
+  getRaidNode,
+} from '../../../shared/game/data/raidBosses';
 import {
   DAILY_REWARD,
+  HERO_ROLL_GEM_COST,
   applyBattleRewards,
   canClaimDailyReward,
   canUpgradeHero,
   claimDailyReward,
+  createInitialPlayerSave,
   createBattleRewards,
+  getEffectiveHeroRarity,
   getHeroProgress,
   getScaledStats,
   getUpgradeCost,
+  rollHero,
   upgradeHero,
 } from '../../../shared/game/logic/progression';
 import {
@@ -38,12 +50,13 @@ import type {
   BattleAction,
   BattleLogEntry,
   BattleState,
+  HeroPose,
   HeroTemplate,
   PlayerSave,
   RewardBundle,
 } from '../../../shared/game/types';
 
-type View = 'raid' | 'heroes' | 'loot';
+type View = 'title' | 'map' | 'party' | 'raid' | 'heroes' | 'loot' | 'help';
 
 const ENERGY_COST = 10;
 const fmt = (n: number) => Math.round(n).toLocaleString();
@@ -70,6 +83,18 @@ const HERO_SLOT_H = Math.floor((CONTENT_H - 4 * 5) / 5);
 const HERO_SPRITE_SIZE = 72;
 const HERO_BAR_X_OFF = HERO_SPRITE_SIZE - 2;
 const STATS_BAR_Y = STAGE_Y + STAGE_H + PAD;
+const HERO_FRAME_DISPLAY_W = 82;
+const HERO_FRAME_DISPLAY_H = 72;
+const HERO_POSE_COL: Record<HeroPose, number> = {
+  idle: 0,
+  walk1: 1,
+  walk2: 2,
+  attack: 3,
+  cast: 4,
+  hit: 5,
+  ko: 5,
+  victory: 6,
+};
 
 type HeroSlotRef = {
   icon: Phaser.GameObjects.Image;
@@ -92,16 +117,50 @@ type HeroCardRef = {
   partyText: Phaser.GameObjects.Text;
 };
 
+type MapNodeRef = {
+  level: number;
+  bg: Phaser.GameObjects.Arc;
+  ring: Phaser.GameObjects.Graphics;
+  label: Phaser.GameObjects.Text;
+  subLabel: Phaser.GameObjects.Text;
+  hit: Phaser.GameObjects.Arc;
+};
+
+type PartyHeroRef = {
+  heroId: string;
+  bg: Phaser.GameObjects.Rectangle;
+  label: Phaser.GameObjects.Text;
+  subLabel: Phaser.GameObjects.Text;
+  check: Phaser.GameObjects.Text;
+};
+
+type RaidRun = {
+  nodeLevel: number;
+  battleIndex: number;
+  battleCount: number;
+  totalDamage: number;
+  party: string[];
+};
+
 export class GameScene extends Phaser.Scene {
   // State
   private profile: PlayerSave | null = null;
   private battle: BattleState | null = null;
-  private view: View = 'raid';
+  private view: View = 'title';
   private lastRewards: RewardBundle | null = null;
   private selectedHeroId: string | null = null;
+  private username = 'player';
   private settingsPanelOpen = false;
+  private selectedRaidLevel = 1;
+  private selectedParty: string[] = [];
+  private raidRun: RaidRun | null = null;
 
   // Containers
+  private titleGroup!: Phaser.GameObjects.Container;
+  private mapGroup!: Phaser.GameObjects.Container;
+  private partyGroup!: Phaser.GameObjects.Container;
+  private helpGroup!: Phaser.GameObjects.Container;
+  private headerGroup!: Phaser.GameObjects.Container;
   private raidGroup!: Phaser.GameObjects.Container;
   private heroesGroup!: Phaser.GameObjects.Container;
   private lootGroup!: Phaser.GameObjects.Container;
@@ -126,6 +185,7 @@ export class GameScene extends Phaser.Scene {
   // Hero slots
   private heroSlots: HeroSlotRef[] = [];
   private activeHighlight!: Phaser.GameObjects.Graphics;
+  private activeTween: Phaser.Tweens.Tween | null = null;
 
   // Action buttons
   private attackBtnBg!: Phaser.GameObjects.Rectangle;
@@ -157,6 +217,12 @@ export class GameScene extends Phaser.Scene {
 
   // Heroes view
   private heroCardRefs: HeroCardRef[] = [];
+  private mapNodeRefs: MapNodeRef[] = [];
+  private partyHeroRefs: PartyHeroRef[] = [];
+  private partyStartBg!: Phaser.GameObjects.Rectangle;
+  private partyStartText!: Phaser.GameObjects.Text;
+  private partyTitleText!: Phaser.GameObjects.Text;
+  private recruitText!: Phaser.GameObjects.Text;
 
   // Hero detail sheet
   private detailHeroName!: Phaser.GameObjects.Text;
@@ -183,25 +249,319 @@ export class GameScene extends Phaser.Scene {
 
   async create() {
     this.add.rectangle(W / 2, H / 2, W, H, COLORS.pageBg);
+    this.username = context.username ?? 'player';
 
+    this.titleGroup = this.add.container(0, 0).setDepth(4);
+    this.mapGroup = this.add.container(0, 0).setDepth(2);
+    this.partyGroup = this.add.container(0, 0).setDepth(2);
+    this.helpGroup = this.add.container(0, 0).setDepth(22);
     this.raidGroup = this.add.container(0, 0).setDepth(2);
     this.heroesGroup = this.add.container(0, 0).setDepth(2);
     this.lootGroup = this.add.container(0, 0).setDepth(2);
 
+    this.buildTitleView();
     this.buildHeader();
+    this.buildMapView();
+    this.buildPartyView();
     this.buildRaidView();
     this.buildHeroesView();
     this.buildLootView();
+    this.buildHelpView();
     this.buildSettingsPanel();
     this.buildResultOverlay();
     this.buildDetailSheet();
 
-    this.setView('raid');
+    this.setView('title');
 
-    const username = context.username ?? 'player';
-    this.profile = await loadKeeperSave(username);
-    this.battle = createBattleState(this.profile);
+    this.profile = await loadKeeperSave(this.username);
+    this.selectedParty = this.profile.party.slice(0, 5);
     this.refreshAll();
+  }
+
+  private buildTitleView() {
+    const bg = this.add
+      .image(W / 2, H / 2, TITLE_SCREEN_KEY)
+      .setDisplaySize(W, H)
+      .setOrigin(0.5);
+
+    const shade = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.34);
+
+    const title = this.add
+      .text(W / 2, 118, 'D9 Raid Keeper', {
+        fontSize: '34px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
+        stroke: '#111827',
+        strokeThickness: 5,
+      })
+      .setOrigin(0.5);
+
+    const subtitle = this.add
+      .text(W / 2, 158, 'Developer-knights vs the layoff ladder', {
+        fontSize: '14px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#f8fafc',
+        stroke: '#111827',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5);
+
+    const makeButton = (y: number, label: string, onClick: () => void) => {
+      const bgRect = this.add
+        .rectangle(W / 2, y, 238, 46, COLORS.ink, 0.92)
+        .setInteractive({ useHandCursor: true });
+      const text = this.add
+        .text(W / 2, y, label, {
+          fontSize: '15px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#ffffff',
+        })
+        .setOrigin(0.5);
+      bgRect.on('pointerdown', onClick);
+      this.titleGroup.add([bgRect, text]);
+    };
+
+    this.titleGroup.add([bg, shade, title, subtitle]);
+    makeButton(520, 'New Game', () => this.handleNewGame());
+    makeButton(574, 'Continue', () => this.handleContinue());
+    makeButton(628, 'Help', () => this.setView('help'));
+  }
+
+  private buildMapView() {
+    const title = this.add
+      .text(W / 2, GAME_Y + 4, 'Corporate Raid Map', {
+        fontSize: '20px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#18181b',
+      })
+      .setOrigin(0.5, 0);
+    const subtitle = this.add
+      .text(W / 2, GAME_Y + 30, 'Clear each node to unlock the boss above it.', {
+        fontSize: '11px',
+        fontFamily: FONT.sans,
+        color: '#52525b',
+      })
+      .setOrigin(0.5, 0);
+
+    const path = this.add.graphics();
+    path.lineStyle(5, 0x94a3b8, 0.42);
+
+    const nodePoints = RAID_NODES.map((node, index) => ({
+      level: node.level,
+      x: W / 2 + (index % 2 === 0 ? -54 : 54),
+      y: 650 - index * 92,
+    }));
+
+    nodePoints.forEach((point, index) => {
+      const next = nodePoints[index + 1];
+      if (!next) return;
+      path.lineBetween(point.x, point.y, next.x, next.y);
+    });
+
+    this.mapGroup.add([path, title, subtitle]);
+
+    nodePoints.forEach((point) => {
+      const node = getRaidNode(point.level);
+      const boss = getBossAppearance(point.level, node.bossId);
+      const ring = this.add.graphics();
+      const bg = this.add
+        .circle(point.x, point.y, 34, COLORS.white)
+        .setInteractive({ useHandCursor: true });
+      const label = this.add
+        .text(point.x, point.y - 8, boss.icon, {
+          fontSize: boss.icon.length > 2 ? '12px' : '15px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#18181b',
+        })
+        .setOrigin(0.5);
+      const subLabel = this.add
+        .text(point.x, point.y + 13, `Lv ${point.level}`, {
+          fontSize: '9px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#52525b',
+        })
+        .setOrigin(0.5);
+      const name = this.add
+        .text(point.x, point.y + 42, node.name, {
+          fontSize: '10px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#3f3f46',
+          wordWrap: { width: 116 },
+          align: 'center',
+        })
+        .setOrigin(0.5, 0);
+
+      bg.on('pointerdown', () => this.openPartySelect(point.level));
+      this.mapGroup.add([ring, bg, label, subLabel, name]);
+      this.mapNodeRefs.push({
+        level: point.level,
+        bg,
+        ring,
+        label,
+        subLabel,
+        hit: bg,
+      });
+    });
+
+    const heroesBtn = this.add
+      .rectangle(PAD + 48, H - 34, 88, 38, COLORS.ink)
+      .setInteractive({ useHandCursor: true });
+    heroesBtn.on('pointerdown', () => this.setView('heroes'));
+    const heroesText = this.add
+      .text(PAD + 48, H - 34, 'Heroes', {
+        fontSize: '12px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
+      })
+      .setOrigin(0.5);
+    const lootBtn = this.add
+      .rectangle(W - PAD - 48, H - 34, 88, 38, COLORS.ink)
+      .setInteractive({ useHandCursor: true });
+    lootBtn.on('pointerdown', () => this.setView('loot'));
+    const lootText = this.add
+      .text(W - PAD - 48, H - 34, 'Loot', {
+        fontSize: '12px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
+      })
+      .setOrigin(0.5);
+    this.mapGroup.add([heroesBtn, heroesText, lootBtn, lootText]);
+  }
+
+  private buildPartyView() {
+    const back = this.add
+      .text(PAD, GAME_Y + 2, '< Map', {
+        fontSize: '13px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#2563eb',
+      })
+      .setInteractive({ useHandCursor: true })
+      .setOrigin(0, 0);
+    back.on('pointerdown', () => this.setView('map'));
+
+    this.partyTitleText = this.add
+      .text(W / 2, GAME_Y + 2, 'Choose 5 Heroes', {
+        fontSize: '18px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#18181b',
+      })
+      .setOrigin(0.5, 0);
+
+    const cardW = Math.floor((W - PAD * 3) / 2);
+    const cardH = 82;
+    const startY = GAME_Y + 48;
+
+    HEROES.forEach((hero, i) => {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      const x = PAD + col * (cardW + PAD);
+      const y = startY + row * (cardH + PAD);
+
+      const bg = this.add
+        .rectangle(x + cardW / 2, y + cardH / 2, cardW, cardH, COLORS.white)
+        .setInteractive({ useHandCursor: true });
+      const sprite = this.add
+        .image(x + 39, y + 40, SNOO_CENTER_SHEET_KEY, hero.spriteFrame)
+        .setDisplaySize(62, 62)
+        .setOrigin(0.5);
+      const label = this.add
+        .text(x + 76, y + 13, hero.name, {
+          fontSize: '11px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#18181b',
+          wordWrap: { width: cardW - 86 },
+        })
+        .setOrigin(0, 0);
+      const subLabel = this.add
+        .text(x + 76, y + 48, hero.role, {
+          fontSize: '10px',
+          fontFamily: FONT.sans,
+          color: '#71717a',
+        })
+        .setOrigin(0, 0);
+      const check = this.add
+        .text(x + cardW - 16, y + 12, '', {
+          fontSize: '15px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#16a34a',
+        })
+        .setOrigin(0.5);
+      bg.on('pointerdown', () => this.toggleSelectedPartyHero(hero.id));
+      this.partyGroup.add([bg, sprite, label, subLabel, check]);
+      this.partyHeroRefs.push({ heroId: hero.id, bg, label, subLabel, check });
+    });
+
+    this.partyStartBg = this.add
+      .rectangle(W / 2, H - 56, W - PAD * 2, 46, COLORS.ink)
+      .setInteractive({ useHandCursor: true });
+    this.partyStartBg.on('pointerdown', () => this.handleStartRaid());
+    this.partyStartText = this.add
+      .text(W / 2, H - 56, 'Start Raid', {
+        fontSize: '15px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
+      })
+      .setOrigin(0.5);
+    this.partyGroup.add([back, this.partyTitleText, this.partyStartBg, this.partyStartText]);
+  }
+
+  private buildHelpView() {
+    const overlay = this.add.rectangle(W / 2, H / 2, W, H, 0x111827, 0.9);
+    const title = this.add
+      .text(W / 2, 92, 'D9 Raid Keeper', {
+        fontSize: '26px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
+      })
+      .setOrigin(0.5);
+    const body = this.add
+      .text(
+        PAD * 3,
+        142,
+        [
+          'A team of five developer-knights climbs the corporate hierarchy to stop the next layoff wave.',
+          '',
+          'Clear raid nodes from bottom to top. Each node contains a short chain of battles. If the team falls, gems still pay out based on how many battles were cleared.',
+          '',
+          `Use gems to recruit heroes. Duplicate heroes raise rarity; duplicates at Legendary convert into gold.`,
+        ].join('\n'),
+        {
+          fontSize: '14px',
+          fontFamily: FONT.sans,
+          color: '#e5e7eb',
+          wordWrap: { width: W - PAD * 6 },
+          lineSpacing: 8,
+        }
+      )
+      .setOrigin(0, 0);
+    const backBg = this.add
+      .rectangle(W / 2, H - 88, 220, 44, COLORS.white)
+      .setInteractive({ useHandCursor: true });
+    const backText = this.add
+      .text(W / 2, H - 88, 'Back', {
+        fontSize: '15px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#111827',
+      })
+      .setOrigin(0.5);
+    backBg.on('pointerdown', () => this.setView('title'));
+    this.helpGroup.add([overlay, title, body, backBg, backText]);
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -209,40 +569,43 @@ export class GameScene extends Phaser.Scene {
   // ══════════════════════════════════════════════════════════════════════
 
   private buildHeader() {
-    // BG and separator — static, always visible, no container needed
-    this.add
-      .rectangle(W / 2, HEADER_H / 2, W, HEADER_H, COLORS.headerBg)
-      .setDepth(8);
-    this.add.rectangle(W / 2, HEADER_H - 1, W, 1, COLORS.border).setDepth(8);
+    const objs: Phaser.GameObjects.GameObject[] = [];
+
+    objs.push(
+      this.add.rectangle(W / 2, HEADER_H / 2, W, HEADER_H, COLORS.headerBg)
+    );
+    objs.push(this.add.rectangle(W / 2, HEADER_H - 1, W, 1, COLORS.border));
 
     // ⚙️ gear icon — left
-    this.add
+    const gear = this.add
       .text(PAD + 16, HEADER_H / 2, '⚙️', {
         fontSize: '26px',
         fontFamily: FONT.emoji,
       })
       .setOrigin(0.5)
-      .setDepth(9)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.toggleSettingsPanel());
+    objs.push(gear);
 
     this.resourceText = this.add
-      .text(PAD + 40, HEADER_H / 2, 'G0  T0  ◆0  ⚡0', {
+      .text(PAD + 40, HEADER_H / 2, '🪙0  🎫0  💎0  ⚡0', {
         fontSize: '11px',
         fontStyle: 'bold',
-        fontFamily: FONT.sans,
+        fontFamily: FONT.emoji,
         color: '#52525b',
       })
       .setOrigin(0, 0.5)
-      .setWordWrapWidth(W - 108)
-      .setDepth(9);
+      .setWordWrapWidth(W - 108);
+    objs.push(this.resourceText);
 
     // RAID level badge — far right
-    const badgeBg = this.add.graphics().setDepth(8);
+    const badgeBg = this.add.graphics();
     badgeBg.fillStyle(COLORS.ink);
     badgeBg.fillRoundedRect(W - 52, (HEADER_H - 34) / 2, 44, 34, 6);
+    objs.push(badgeBg);
 
-    this.add
+    objs.push(
+      this.add
       .text(W - 30, HEADER_H / 2 - 8, 'RAID', {
         fontSize: '8px',
         fontStyle: 'bold',
@@ -250,7 +613,7 @@ export class GameScene extends Phaser.Scene {
         color: '#ffffff',
       })
       .setOrigin(0.5)
-      .setDepth(9);
+    );
 
     this.raidLvText = this.add
       .text(W - 30, HEADER_H / 2 + 8, '1', {
@@ -259,8 +622,10 @@ export class GameScene extends Phaser.Scene {
         fontFamily: FONT.sans,
         color: '#ffffff',
       })
-      .setOrigin(0.5)
-      .setDepth(9);
+      .setOrigin(0.5);
+    objs.push(this.raidLvText);
+
+    this.headerGroup = this.add.container(0, 0, objs).setDepth(8);
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -355,8 +720,8 @@ export class GameScene extends Phaser.Scene {
     const navY = tilesY + 78;
     const navH = 48;
     const navBtnW = (panelW - PAD * 4) / 3;
-    const views: View[] = ['raid', 'heroes', 'loot'];
-    const navIcons = ['⚔️', '🧙', '🎁'];
+    const views: View[] = ['map', 'heroes', 'loot'];
+    const navIcons = ['🗺️', '🧙', '🎁'];
     const navBtns: Phaser.GameObjects.Rectangle[] = [];
 
     views.forEach((v, i) => {
@@ -415,7 +780,7 @@ export class GameScene extends Phaser.Scene {
 
     const actionBtnY = actLblY + 18;
     const actionBtnH = 42;
-    const actionBtnW = (panelW - PAD * 3) / 2;
+    const actionBtnW = panelW - PAD * 2; // full width
 
     this.dailyActBg = this.add.graphics();
     this.dailyActBg.fillStyle(COLORS.btnGreen);
@@ -454,60 +819,16 @@ export class GameScene extends Phaser.Scene {
       .text(
         panelX + PAD + actionBtnW / 2,
         actionBtnY + 29,
-        `+${DAILY_REWARD.gold}G +${DAILY_REWARD.gems}◆ +${DAILY_REWARD.energy}⚡`,
+        `+${DAILY_REWARD.gold}🪙 +${DAILY_REWARD.gems}💎 +${DAILY_REWARD.energy}⚡`,
         {
           fontSize: '9px',
           fontStyle: 'bold',
-          fontFamily: FONT.sans,
+          fontFamily: FONT.emoji,
           color: '#dcfce7',
         }
       )
       .setOrigin(0.5);
     objs.push(this.dailyActText, this.dailyActSubText);
-
-    const raidActBtnX = panelX + PAD * 2 + actionBtnW;
-    const raidActBg = this.add.graphics();
-    raidActBg.fillStyle(COLORS.ink);
-    raidActBg.fillRoundedRect(
-      raidActBtnX,
-      actionBtnY,
-      actionBtnW,
-      actionBtnH,
-      6
-    );
-    objs.push(raidActBg);
-    const raidActHit = this.add
-      .rectangle(
-        raidActBtnX + actionBtnW / 2,
-        actionBtnY + actionBtnH / 2,
-        actionBtnW,
-        actionBtnH,
-        0,
-        0
-      )
-      .setInteractive({ useHandCursor: true });
-    raidActHit.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
-      ptr.event.stopPropagation();
-      this.settingsPanelOpen = false;
-      this.settingsGroup.setVisible(false);
-      this.handleStartRaid();
-    });
-    objs.push(raidActHit);
-    objs.push(
-      this.add
-        .text(
-          raidActBtnX + actionBtnW / 2,
-          actionBtnY + actionBtnH / 2,
-          'New Raid',
-          {
-            fontSize: '12px',
-            fontStyle: 'bold',
-            fontFamily: FONT.sans,
-            color: '#ffffff',
-          }
-        )
-        .setOrigin(0.5)
-    );
 
     objs.push(
       this.add
@@ -561,7 +882,7 @@ export class GameScene extends Phaser.Scene {
     this.dailyActText.setText(available ? 'Daily Reward' : 'Claimed Today');
     this.dailyActSubText.setText(
       available
-        ? `+${DAILY_REWARD.gold}G +${DAILY_REWARD.gems}◆ +${DAILY_REWARD.energy}⚡`
+        ? `+${DAILY_REWARD.gold}🪙 +${DAILY_REWARD.gems}💎 +${DAILY_REWARD.energy}⚡`
         : 'Resets tomorrow'
     );
     available
@@ -584,18 +905,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildBattleField() {
-    // Background image stretched to fill the stage
     const bgImg = this.add
       .image(STAGE_X + STAGE_W / 2, STAGE_Y + STAGE_H / 2, 'battle-bg')
       .setDisplaySize(STAGE_W, STAGE_H)
       .setOrigin(0.5);
 
-    // Dark gradient on the hero panel side so slot text stays readable
-    const shade = this.add.graphics();
-    shade.fillStyle(0x000000, 0.28);
-    shade.fillRect(HERO_AREA_X - PAD, STAGE_Y, HERO_AREA_W + PAD * 2, STAGE_H);
-
-    this.raidGroup.add([bgImg, shade]);
+    this.raidGroup.add(bgImg);
   }
 
   private buildBossInfoBar() {
@@ -704,10 +1019,10 @@ export class GameScene extends Phaser.Scene {
       const cy = sy + HERO_SLOT_H / 2;
 
       const icon = this.add
-        .image(cx, cy, SNOO_LEFT_SHEET_KEY, 0)
-        .setDisplaySize(HERO_SPRITE_SIZE, HERO_SPRITE_SIZE)
-        .setBlendMode(Phaser.BlendModes.SCREEN)
+        .image(cx, cy, SNOO_FRAME_SHEET_KEY)
+        .setDisplaySize(HERO_FRAME_DISPLAY_W, HERO_FRAME_DISPLAY_H)
         .setOrigin(0.5);
+      this.setHeroPose(icon, 0, 'idle');
 
       const hpText = this.add
         .text(textX, cy - 8, '—', {
@@ -784,7 +1099,7 @@ export class GameScene extends Phaser.Scene {
 
     [this.ultBtnBg, this.ultBtnText] = makeBtn(
       startX + (btnW + gap) * 2,
-      '⚡ Ult'
+      '⚡ Limit'
     );
     this.ultBtnBg.on('pointerdown', () => this.handleAction('ultimate'));
   }
@@ -925,12 +1240,12 @@ export class GameScene extends Phaser.Scene {
     const nextBtnHit = this.add
       .rectangle(panelCX, nextBtnY + 4, panelW - PAD * 4, 44, 0, 0)
       .setInteractive({ useHandCursor: true });
-    nextBtnHit.on('pointerdown', () => this.handleStartRaid());
+    nextBtnHit.on('pointerdown', () => this.setView('map'));
     objs.push(nextBtnHit);
 
     objs.push(
       this.add
-        .text(panelCX, nextBtnY + 4, 'Next raid', {
+        .text(panelCX, nextBtnY + 4, 'Back to map', {
           fontSize: '14px',
           fontStyle: 'bold',
           fontFamily: FONT.sans,
@@ -964,6 +1279,20 @@ export class GameScene extends Phaser.Scene {
       const cy = gridStartY + row * (cardH + PAD);
       this.buildHeroCard(hero, cx, cy, cardW, cardH);
     });
+
+    const recruitBg = this.add
+      .rectangle(W / 2, H - 44, W - PAD * 2, 42, COLORS.btnSkill)
+      .setInteractive({ useHandCursor: true });
+    recruitBg.on('pointerdown', () => this.handleRecruitHero());
+    this.recruitText = this.add
+      .text(W / 2, H - 44, `Recruit · ${HERO_ROLL_GEM_COST} gems`, {
+        fontSize: '14px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
+      })
+      .setOrigin(0.5);
+    this.heroesGroup.add([recruitBg, this.recruitText]);
   }
 
   private buildHeroCard(
@@ -1337,10 +1666,18 @@ export class GameScene extends Phaser.Scene {
 
   private setView(v: View) {
     this.view = v;
+    this.titleGroup.setVisible(v === 'title');
+    this.mapGroup.setVisible(v === 'map');
+    this.partyGroup.setVisible(v === 'party');
     this.raidGroup.setVisible(v === 'raid');
     this.heroesGroup.setVisible(v === 'heroes');
     this.lootGroup.setVisible(v === 'loot');
+    this.helpGroup.setVisible(v === 'help');
+    this.headerGroup.setVisible(!['title', 'help'].includes(v));
     if (v !== 'heroes') this.hideDetail();
+    if (v !== 'raid') this.resultGroup?.setVisible(false);
+    if (v === 'map') this.refreshMap();
+    if (v === 'party') this.refreshPartySelect();
     if (v === 'loot') this.refreshLoot();
     if (v === 'heroes') this.refreshHeroes();
   }
@@ -1353,6 +1690,8 @@ export class GameScene extends Phaser.Scene {
     this.refreshHeader();
     this.refreshDailyAction();
     this.refreshRaid();
+    if (this.view === 'map') this.refreshMap();
+    if (this.view === 'party') this.refreshPartySelect();
     if (this.view === 'heroes') this.refreshHeroes();
     if (this.view === 'loot') this.refreshLoot();
   }
@@ -1360,9 +1699,91 @@ export class GameScene extends Phaser.Scene {
   private refreshHeader() {
     if (!this.profile) return;
     this.resourceText.setText(
-      `G${fmtCompact(this.profile.gold)}  T${fmtCompact(this.profile.raidTokens)}  ◆${fmtCompact(this.profile.gems)}  ⚡${fmtCompact(this.profile.energy)}`
+      `🪙${fmtCompact(this.profile.gold)}  🎫${fmtCompact(this.profile.raidTokens)}  💎${fmtCompact(this.profile.gems)}  ⚡${fmtCompact(this.profile.energy)}`
     );
-    this.raidLvText.setText(String(this.profile.raidLevel));
+    this.raidLvText.setText(
+      this.profile.raidLevel > RAID_NODES.length ? 'MAX' : String(this.profile.raidLevel)
+    );
+  }
+
+  private getOwnedHeroIds() {
+    return new Set(this.profile?.heroes.map((hero) => hero.heroId) ?? []);
+  }
+
+  private refreshMap() {
+    if (!this.profile) return;
+
+    this.mapNodeRefs.forEach((ref) => {
+      const completed = ref.level < this.profile!.raidLevel;
+      const unlocked = ref.level <= this.profile!.raidLevel;
+      const current = ref.level === Math.min(this.profile!.raidLevel, RAID_NODES.length);
+      const fill = completed ? 0xdcfce7 : unlocked ? 0xffffff : 0xe5e7eb;
+      const stroke = completed ? 0x16a34a : current ? 0xf97316 : 0x94a3b8;
+
+      ref.bg.setFillStyle(fill, unlocked ? 1 : 0.72);
+      ref.ring.clear();
+      ref.ring.lineStyle(current ? 4 : 2, stroke, unlocked ? 1 : 0.45);
+      ref.ring.strokeCircle(ref.bg.x, ref.bg.y, current ? 39 : 36);
+      ref.label.setAlpha(unlocked ? 1 : 0.35);
+      ref.subLabel
+        .setText(completed ? 'DONE' : unlocked ? `Lv ${ref.level}` : 'LOCK')
+        .setColor(completed ? '#15803d' : unlocked ? '#52525b' : '#94a3b8');
+
+      unlocked
+        ? ref.hit.setInteractive({ useHandCursor: true })
+        : ref.hit.disableInteractive();
+    });
+  }
+
+  private refreshPartySelect() {
+    if (!this.profile) return;
+
+    const owned = this.getOwnedHeroIds();
+    this.selectedParty = this.selectedParty
+      .filter((heroId) => owned.has(heroId))
+      .slice(0, 5);
+
+    const node = getRaidNode(this.selectedRaidLevel);
+    this.partyTitleText.setText(`Node ${node.level}: ${node.name}`);
+
+    this.partyHeroRefs.forEach((ref) => {
+      const hero = HEROES.find((candidate) => candidate.id === ref.heroId);
+      const isOwned = owned.has(ref.heroId);
+      const selected = this.selectedParty.includes(ref.heroId);
+      const rarity = hero && this.profile ? getEffectiveHeroRarity(this.profile, hero) : null;
+
+      ref.bg.setFillStyle(
+        selected ? 0xdcfce7 : isOwned ? COLORS.white : 0xe5e7eb,
+        isOwned ? 1 : 0.64
+      );
+      ref.bg.setStrokeStyle(
+        selected ? 2 : 1,
+        selected ? COLORS.btnGreen : COLORS.border,
+        isOwned ? 1 : 0.5
+      );
+      ref.label.setAlpha(isOwned ? 1 : 0.46);
+      ref.subLabel
+        .setText(isOwned ? `${hero?.role ?? ''} · ${rarity ?? ''}` : 'Locked')
+        .setAlpha(isOwned ? 1 : 0.5);
+      ref.check.setText(selected ? 'OK' : '');
+
+      isOwned
+        ? ref.bg.setInteractive({ useHandCursor: true })
+        : ref.bg.disableInteractive();
+    });
+
+    const ready = this.selectedParty.length === 5 && this.profile.energy >= ENERGY_COST;
+    this.partyStartBg.setFillStyle(ready ? COLORS.ink : COLORS.btnDisabled);
+    this.partyStartText.setText(
+      this.selectedParty.length < 5
+        ? `Choose ${5 - this.selectedParty.length} more`
+        : this.profile.energy < ENERGY_COST
+          ? `Need ${ENERGY_COST} energy`
+          : `Start Raid · ${ENERGY_COST} energy`
+    );
+    ready
+      ? this.partyStartBg.setInteractive({ useHandCursor: true })
+      : this.partyStartBg.disableInteractive();
   }
 
   private refreshRaid() {
@@ -1392,13 +1813,21 @@ export class GameScene extends Phaser.Scene {
     this.bossHpFill.scaleX = clamp(boss.hp / boss.maxHp);
     this.bossAura.setFillStyle(elite ? 0xfbbf24 : COLORS.boss, 0.22);
     if (this.textures.exists(boss.spriteKey)) {
-      this.bossImage.setTexture(boss.spriteKey).setDisplaySize(112, 112);
+      this.bossImage
+        .setTexture(boss.spriteKey, boss.spriteFrame ?? 0)
+        .setDisplaySize(112, 112);
     }
   }
 
   private refreshHeroSlots() {
     if (!this.battle) return;
     const { heroes, activeHeroIndex } = this.battle;
+
+    // Stop existing blink tween before rebuilding slot states
+    if (this.activeTween) {
+      this.activeTween.stop();
+      this.activeTween = null;
+    }
 
     this.heroSlots.forEach((slot) => {
       slot.objects.forEach((object) => object.setVisible(false));
@@ -1409,7 +1838,7 @@ export class GameScene extends Phaser.Scene {
       if (!slot) return;
       const dead = hero.hp <= 0;
       const alpha = dead ? 0.4 : 1;
-      slot.icon.setFrame(hero.spriteFrame);
+      this.setHeroPose(slot.icon, hero.spriteFrame, dead ? 'ko' : 'idle');
       slot.objects.forEach((object) => object.setVisible(true));
       slot.icon.setAlpha(alpha);
       slot.hpText
@@ -1428,6 +1857,19 @@ export class GameScene extends Phaser.Scene {
         4,
         32
       );
+
+      // Blink the active hero's icon to show it's their turn
+      const activeHero = heroes[activeHeroIndex];
+      if (activeHero && activeHero.hp > 0) {
+        this.activeTween = this.tweens.add({
+          targets: activeSlot.icon,
+          alpha: { from: 1, to: 0.2 },
+          duration: 520,
+          ease: 'Sine.InOut',
+          yoyo: true,
+          repeat: -1,
+        });
+      }
     }
   }
 
@@ -1456,7 +1898,7 @@ export class GameScene extends Phaser.Scene {
     ultReady
       ? this.ultBtnBg.setInteractive({ useHandCursor: true })
       : this.ultBtnBg.disableInteractive();
-    this.ultBtnText.setText(ultReady ? '⚡ Ult' : 'Ult');
+    this.ultBtnText.setText(ultReady ? '⚡ Limit' : 'Limit');
     this.ultBtnText.setAlpha(ultReady ? 1 : 0.42);
   }
 
@@ -1500,11 +1942,11 @@ export class GameScene extends Phaser.Scene {
       this.resultDamageText.setText(fmt(this.battle.totalDamage));
       this.resultRewardsText.setText(
         this.lastRewards
-          ? `+${this.lastRewards.gold} gold  ·  +${this.lastRewards.exp} EXP`
+          ? `+${this.lastRewards.gold} gold  ·  +${this.lastRewards.gems} gems  ·  +${this.lastRewards.exp} EXP`
           : ''
       );
 
-      const showNext = won;
+      const showNext = won && this.profile.raidLevel <= RAID_NODES.length;
       this.resultNextBg.setVisible(showNext);
       this.resultNextIcon.setVisible(showNext);
       this.resultNextName.setVisible(showNext);
@@ -1523,12 +1965,16 @@ export class GameScene extends Phaser.Scene {
     const partySize = this.profile.party.length;
     this.heroCardRefs.forEach(
       ({ heroId, levelText, btnBg, partyBg, partyText }) => {
+        const template = HEROES.find((h) => h.id === heroId);
+        const owned = this.profile!.heroes.some((hero) => hero.heroId === heroId);
         const progress = getHeroProgress(this.profile!, heroId);
-        const ready = canUpgradeHero(this.profile!, heroId);
+        const ready = owned && canUpgradeHero(this.profile!, heroId);
         const inParty = this.profile!.party.includes(heroId);
         const canRemove = inParty && partySize > 1;
         levelText.setText(
-          `${HEROES.find((h) => h.id === heroId)?.role ?? ''} · Lv ${progress.level}`
+          owned
+            ? `${template?.role ?? ''} · ${template ? getEffectiveHeroRarity(this.profile!, template) : ''} · Lv ${progress.level}`
+            : 'Locked · Recruit with gems'
         );
         btnBg.setFillStyle(ready ? COLORS.btnPrimary : COLORS.btnDisabled);
         ready
@@ -1536,7 +1982,9 @@ export class GameScene extends Phaser.Scene {
           : btnBg.disableInteractive();
 
         partyText.setText(
-          inParty
+          !owned
+            ? 'Locked'
+            : inParty
             ? canRemove
               ? 'Remove'
               : 'In Party'
@@ -1545,13 +1993,15 @@ export class GameScene extends Phaser.Scene {
               : 'Add'
         );
         partyBg.setFillStyle(
-          inParty
+          !owned
+            ? COLORS.btnDisabled
+            : inParty
             ? canRemove
               ? COLORS.btnGreen
               : COLORS.btnDisabled
             : COLORS.btnSkill
         );
-        !inParty || canRemove
+        owned && (!inParty || canRemove)
           ? partyBg.setInteractive({ useHandCursor: true })
           : partyBg.disableInteractive();
       }
@@ -1627,6 +2077,12 @@ export class GameScene extends Phaser.Scene {
     this.selectedHeroId = heroId;
     const hero = HEROES.find((h) => h.id === heroId);
     if (!hero || !this.profile) return;
+    const owned = this.profile.heroes.some((entry) => entry.heroId === heroId);
+
+    if (!owned) {
+      this.showNotification('Recruit this hero with gems first.');
+      return;
+    }
 
     const progress = getHeroProgress(this.profile, heroId);
     const stats = getScaledStats(hero, progress.level);
@@ -1638,13 +2094,14 @@ export class GameScene extends Phaser.Scene {
     this.detailRoleLv.setText(
       `${hero.title} · ${hero.role} · Lv ${progress.level}`
     );
+    const rarity = getEffectiveHeroRarity(this.profile, hero);
     this.detailRarityText.setColor(
       '#' +
-        (RARITY_COLOR[hero.rarity] ?? COLORS.rarityCommon)
+        (RARITY_COLOR[rarity] ?? COLORS.rarityCommon)
           .toString(16)
           .padStart(6, '0')
     );
-    this.detailRarityText.setText(hero.rarity);
+    this.detailRarityText.setText(rarity);
 
     [stats.hp, stats.atk, stats.def, stats.mag, stats.res, stats.spd].forEach(
       (v, i) => this.detailStatValues[i]?.setText(String(v))
@@ -1680,6 +2137,69 @@ export class GameScene extends Phaser.Scene {
   // Action handlers
   // ══════════════════════════════════════════════════════════════════════
 
+  private handleNewGame() {
+    this.profile = createInitialPlayerSave(this.username);
+    this.selectedParty = this.profile.party.slice(0, 5);
+    this.battle = null;
+    this.raidRun = null;
+    this.lastRewards = null;
+    void persistKeeperSave(this.profile);
+    this.setView('map');
+    this.refreshAll();
+  }
+
+  private handleContinue() {
+    if (!this.profile) {
+      this.profile = createInitialPlayerSave(this.username);
+    }
+
+    this.selectedParty = this.profile.party.slice(0, 5);
+    this.battle = null;
+    this.raidRun = null;
+    this.lastRewards = null;
+    this.setView('map');
+    this.refreshAll();
+  }
+
+  private openPartySelect(raidLevel: number) {
+    if (!this.profile) return;
+    if (raidLevel > this.profile.raidLevel) {
+      this.showNotification('Clear the lower node first.');
+      return;
+    }
+
+    this.selectedRaidLevel = raidLevel;
+    const owned = this.getOwnedHeroIds();
+    this.selectedParty = (this.profile.party.length > 0 ? this.profile.party : [])
+      .filter((heroId) => owned.has(heroId))
+      .slice(0, 5);
+
+    if (this.selectedParty.length < 5) {
+      HEROES.forEach((hero) => {
+        if (this.selectedParty.length >= 5) return;
+        if (owned.has(hero.id) && !this.selectedParty.includes(hero.id)) {
+          this.selectedParty.push(hero.id);
+        }
+      });
+    }
+
+    this.setView('party');
+  }
+
+  private toggleSelectedPartyHero(heroId: string) {
+    if (!this.profile || !this.getOwnedHeroIds().has(heroId)) return;
+
+    if (this.selectedParty.includes(heroId)) {
+      this.selectedParty = this.selectedParty.filter((id) => id !== heroId);
+    } else if (this.selectedParty.length < 5) {
+      this.selectedParty = [...this.selectedParty, heroId];
+    } else {
+      this.selectedParty = [...this.selectedParty.slice(1), heroId];
+    }
+
+    this.refreshPartySelect();
+  }
+
   private handleAction(action: BattleAction) {
     if (!this.profile || !this.battle || this.battle.status !== 'active')
       return;
@@ -1688,16 +2208,25 @@ export class GameScene extends Phaser.Scene {
     if (action === 'ultimate' && !canUseUltimate(activeHero)) return;
     if (action === 'skill' && !canUseSkill(activeHero)) return;
 
+    const activeIndex = this.battle.heroes.findIndex(
+      (hero) => hero.id === activeHero?.id
+    );
     const prevHeroes = this.battle.heroes;
     const prevHeroHps = prevHeroes.map((h) => h.hp);
     const nextBattle = resolveHeroAction(this.battle, action);
+    const bossDamage = Math.max(
+      0,
+      Math.round(this.battle.boss.hp - nextBattle.boss.hp)
+    );
+    const damagedHeroSlots: Array<{ index: number; row: number; ko: boolean }> = [];
 
     // Show hero attack effect on boss
     if (activeHero) {
-      const frame =
-        GameScene.ROLE_EFFECT_FRAME[activeHero.role] ??
-        GameScene.ROLE_EFFECT_FRAME['Warrior']!;
+      const frame = this.getHeroEffectFrame(activeHero.role, activeHero.level, action);
       this.spawnEffectSprite(frame, this.bossCX, this.bossCY);
+      if (bossDamage > 0) {
+        this.spawnBossFloat(bossDamage, action === 'ultimate' ? 'ultimate' : 'damage');
+      }
 
       // Shake boss image on hit
       if (nextBattle.boss.hp < this.battle.boss.hp) {
@@ -1728,14 +2257,19 @@ export class GameScene extends Phaser.Scene {
         diff < 0 ? (isActorUlt ? 'ultimate' : 'damage') : 'heal'
       );
 
-      if (diff < 0 && prev.id !== activeHero?.id) {
-        // Boss hit this hero — show boss effect
+      if (diff < 0) {
+        // Boss hit this hero
         const slot = this.heroSlots[i];
         if (slot) {
+          damagedHeroSlots.push({
+            index: i,
+            row: nextHero.spriteFrame,
+            ko: nextHero.hp <= 0,
+          });
           const bossSpecial = nextBattle.boss.specialSkill;
           const bossFrame = bossSpecial
-            ? (GameScene.BOSS_DEBUFF_FRAME[bossSpecial.effectType] ?? 7)
-            : 7; // default: big thunder for Thread Quake
+            ? (GameScene.BOSS_DEBUFF_FRAME[bossSpecial.effectType] ?? 9)
+            : 9; // default: THUNDER col 3 (big lightning)
           this.spawnEffectSprite(bossFrame, slot.iconCX, slot.iconCY);
         }
       }
@@ -1756,10 +2290,10 @@ export class GameScene extends Phaser.Scene {
     ) {
       const frame =
         GameScene.BOSS_DEBUFF_FRAME[nextBattle.boss.specialSkill.effectType] ??
-        7;
+        9;
       this.heroSlots.forEach((slot, i) => {
-        if (nextBattle.heroes[i]?.hp ?? 0 > 0) {
-          this.time.delayedCall(i * 80, () =>
+        if ((nextBattle.heroes[i]?.hp ?? 0) > 0) {
+          this.time.delayedCall(i * 100, () =>
             this.spawnEffectSprite(frame, slot.iconCX, slot.iconCY)
           );
         }
@@ -1781,26 +2315,80 @@ export class GameScene extends Phaser.Scene {
 
     if (nextBattle.status === 'active') {
       this.refreshRaid();
+      if (activeHero) {
+        this.animateActiveHeroAction(activeIndex, activeHero.spriteFrame, action);
+      }
+      damagedHeroSlots.forEach(({ index, row, ko }) =>
+        this.animateHeroHit(index, row, ko)
+      );
       return;
     }
 
-    // Battle ended — apply rewards and track level-ups
+    const run = this.raidRun ?? {
+      nodeLevel: nextBattle.raidLevel,
+      battleIndex: nextBattle.encounterIndex,
+      battleCount: nextBattle.encounterCount,
+      totalDamage: 0,
+      party: this.profile.party,
+    };
+
+    if (nextBattle.status === 'won' && run.battleIndex < run.battleCount) {
+      const node = getRaidNode(run.nodeLevel);
+      const nextIndex = run.battleIndex + 1;
+      this.raidRun = {
+        ...run,
+        battleIndex: nextIndex,
+        totalDamage: run.totalDamage + nextBattle.totalDamage,
+      };
+      this.battle = createBattleState(this.profile, {
+        raidLevel: node.level,
+        bossId: node.bossId,
+        encounterIndex: nextIndex,
+        encounterCount: run.battleCount,
+      });
+      this.showNotification(`Encounter ${nextIndex}/${run.battleCount}`);
+      this.refreshAll();
+      if (activeHero) {
+        this.animateActiveHeroAction(activeIndex, activeHero.spriteFrame, action);
+      }
+      damagedHeroSlots.forEach(({ index, row, ko }) =>
+        this.animateHeroHit(index, row, ko)
+      );
+      return;
+    }
+
+    // Raid node ended — apply rewards and track level-ups
     const victory = nextBattle.status === 'won';
+    const battlesCleared = victory
+      ? run.battleCount
+      : Math.max(0, run.battleIndex - 1);
+    const runDamage = run.totalDamage + nextBattle.totalDamage;
+    this.battle = {
+      ...nextBattle,
+      totalDamage: runDamage,
+    };
     const prevLevels = Object.fromEntries(
       this.profile.heroes.map((h) => [h.heroId, h.level])
     );
     const rewards = createBattleRewards(
-      nextBattle.totalDamage,
+      runDamage,
       victory,
-      this.profile.inventory.length
+      this.profile.inventory.length,
+      battlesCleared,
+      run.battleCount
     );
     const nextProfile = applyBattleRewards(
       this.profile,
       rewards,
-      nextBattle.totalDamage
+      runDamage,
+      {
+        victory,
+        raidLevel: run.nodeLevel,
+      }
     );
     this.lastRewards = rewards;
     this.profile = nextProfile;
+    this.raidRun = null;
 
     // Add level-up entries to battle log
     const levelUpEntries: BattleLogEntry[] = [];
@@ -1826,19 +2414,74 @@ export class GameScene extends Phaser.Scene {
 
     void persistKeeperSave(nextProfile);
     this.refreshAll();
+    if (activeHero) {
+      this.animateActiveHeroAction(activeIndex, activeHero.spriteFrame, action);
+    }
+    damagedHeroSlots.forEach(({ index, row, ko }) =>
+      this.animateHeroHit(index, row, ko)
+    );
+  }
+
+  private showNotification(message: string) {
+    const notif = this.add
+      .text(W / 2, H - 110, message, {
+        fontSize: '13px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
+        backgroundColor: '#18181b',
+        padding: { x: 14, y: 8 },
+      })
+      .setOrigin(0.5)
+      .setDepth(40)
+      .setAlpha(0);
+    this.tweens.add({
+      targets: notif,
+      alpha: 1,
+      duration: 180,
+      onComplete: () => {
+        this.time.delayedCall(2200, () => {
+          this.tweens.add({ targets: notif, alpha: 0, duration: 380, onComplete: () => notif.destroy() });
+        });
+      },
+    });
   }
 
   private handleStartRaid() {
     if (!this.profile) return;
-    if (this.profile.energy < ENERGY_COST) return;
+    if (this.selectedParty.length !== 5) {
+      this.showNotification('Choose exactly 5 heroes.');
+      return;
+    }
+    if (this.profile.energy < ENERGY_COST) {
+      this.showNotification(`⚡ Need ${ENERGY_COST} energy to raid (have ${Math.floor(this.profile.energy)})`);
+      return;
+    }
+    const node = getRaidNode(this.selectedRaidLevel);
+    const battleCount =
+      node.minBattles +
+      Math.floor(Math.random() * (node.maxBattles - node.minBattles + 1));
     const nextProfile = {
       ...this.profile,
       energy: this.profile.energy - ENERGY_COST,
+      party: this.selectedParty,
       updatedAt: new Date().toISOString(),
     };
     this.profile = nextProfile;
     void persistKeeperSave(nextProfile);
-    this.battle = createBattleState(nextProfile);
+    this.raidRun = {
+      nodeLevel: node.level,
+      battleIndex: 1,
+      battleCount,
+      totalDamage: 0,
+      party: this.selectedParty,
+    };
+    this.battle = createBattleState(nextProfile, {
+      raidLevel: node.level,
+      bossId: node.bossId,
+      encounterIndex: 1,
+      encounterCount: battleCount,
+    });
     this.lastRewards = null;
     this.resultGroup.setVisible(false);
     this.setView('raid');
@@ -1854,8 +2497,19 @@ export class GameScene extends Phaser.Scene {
     this.refreshAll();
   }
 
+  private handleRecruitHero() {
+    if (!this.profile) return;
+
+    const result = rollHero(this.profile);
+    this.profile = result.save;
+    void persistKeeperSave(result.save);
+    this.showNotification(result.message);
+    this.refreshAll();
+  }
+
   private handleToggleParty(heroId: string) {
     if (!this.profile) return;
+    if (!this.profile.heroes.some((hero) => hero.heroId === heroId)) return;
 
     const currentParty =
       this.profile.party.length > 0
@@ -1903,43 +2557,133 @@ export class GameScene extends Phaser.Scene {
   // Combat effects
   // ══════════════════════════════════════════════════════════════════════
 
-  // Spritesheet layout: row 0=FIRE (0-3), row 1=THUNDER (4-7),
-  //                     row 2=BLIZZARD (8-11), row 3=SLASH/HIT (12-15)
-  private static readonly ROLE_EFFECT_FRAME: Record<string, number> = {
-    Tank: 14,     // starburst impact
-    Warrior: 12,  // red slash arc
-    Mage: 2,      // large flame
-    Ranger: 13,   // explosive slash arc
-    Healer: 5,    // thunder spark (light)
-    Support: 6,   // lightning bolt
+  // Damage_effect.png is 6 cols × 4 rows (256×256 each):
+  //   Row 0  FIRE      frames  0– 5  (weakest→strongest)
+  //   Row 1  THUNDER   frames  6–11
+  //   Row 2  BLIZZARD  frames 12–17
+  //   Row 3  SLASH     frames 18–23  (col 5 = "999" special)
+  private static readonly ROLE_ELEMENT_BASE: Record<string, number> = {
+    Tank: 18, Warrior: 18,  // SLASH
+    Mage: 0,                // FIRE
+    Ranger: 12,             // BLIZZARD (ice arrows)
+    Healer: 6, Support: 6,  // THUNDER
   };
 
   private static readonly BOSS_DEBUFF_FRAME: Record<string, number> = {
-    berserk: 3,   // fire explosion
-    daze: 7,      // massive thunder
-    silence: 11,  // ice spike
-    confuse: 10,  // blizzard tornado
-    blind: 8,     // snowflake burst
+    berserk: 5,  // FIRE   col 5 — intense explosion
+    daze: 9,     // THUNDER col 3 — big lightning
+    silence: 17, // BLIZZARD col 5 — heavy ice
+    confuse: 13, // BLIZZARD col 1 — swirling blizzard
+    blind: 6,    // THUNDER col 0 — flash
   };
+
+  private setHeroPose(
+    image: Phaser.GameObjects.Image,
+    row: number,
+    pose: HeroPose
+  ) {
+    const col = HERO_POSE_LABEL_COLS + HERO_POSE_COL[pose];
+    image
+      .setTexture(SNOO_FRAME_SHEET_KEY)
+      .setCrop(
+        col * HERO_POSE_FRAME_W,
+        row * HERO_POSE_FRAME_H,
+        HERO_POSE_FRAME_W,
+        HERO_POSE_FRAME_H
+      );
+  }
+
+  private animateActiveHeroAction(
+    slotIndex: number,
+    row: number,
+    action: BattleAction
+  ) {
+    const slot = this.heroSlots[slotIndex];
+    if (!slot) return;
+
+    this.setHeroPose(slot.icon, row, action === 'attack' ? 'attack' : 'cast');
+    slot.icon.setX(slot.iconCX);
+    this.tweens.add({
+      targets: slot.icon,
+      x: slot.iconCX - 20,
+      duration: 200,
+      ease: 'Sine.Out',
+      yoyo: true,
+      onComplete: () => {
+        slot.icon.setX(slot.iconCX);
+        this.setHeroPose(slot.icon, row, 'idle');
+      },
+    });
+  }
+
+  private animateHeroHit(slotIndex: number, row: number, ko: boolean) {
+    const slot = this.heroSlots[slotIndex];
+    if (!slot) return;
+
+    this.setHeroPose(slot.icon, row, ko ? 'ko' : 'hit');
+    this.tweens.add({
+      targets: slot.icon,
+      x: { from: slot.iconCX - 4, to: slot.iconCX + 4 },
+      duration: 70,
+      yoyo: true,
+      repeat: 2,
+      onComplete: () => {
+        slot.icon.setX(slot.iconCX);
+        this.setHeroPose(slot.icon, row, ko ? 'ko' : 'idle');
+      },
+    });
+  }
+
+  private getHeroEffectFrame(role: string, level: number, action: BattleAction): number {
+    const base = GameScene.ROLE_ELEMENT_BASE[role] ?? 18;
+    const col = action === 'ultimate' ? 5
+              : action === 'attack'   ? 0
+              : Math.min(4, Math.floor((level - 1) / 4));
+    return base + col;
+  }
 
   private spawnEffectSprite(frame: number, x: number, y: number) {
     if (!this.textures.exists(DAMAGE_EFFECT_KEY)) return;
 
     const img = this.add
       .image(x, y, DAMAGE_EFFECT_KEY, frame)
-      .setDisplaySize(144, 96)
+      .setDisplaySize(128, 128)
       .setOrigin(0.5)
       .setDepth(16)
-      .setAlpha(0.88);
+      .setAlpha(0.92);
 
     this.tweens.add({
       targets: img,
       alpha: 0,
-      scaleX: 1.5,
-      scaleY: 1.5,
-      duration: 500,
+      scaleX: 1.6,
+      scaleY: 1.6,
+      duration: 780,
       ease: 'Cubic.Out',
       onComplete: () => img.destroy(),
+    });
+  }
+
+  private spawnBossFloat(value: number, kind: 'damage' | 'ultimate') {
+    const color = kind === 'ultimate' ? '#fbbf24' : '#ef4444';
+    const floatText = this.add
+      .text(this.bossCX, this.bossCY - 58, `-${value}`, {
+        fontSize: kind === 'ultimate' ? '18px' : '14px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color,
+        stroke: '#000000',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(17);
+
+    this.tweens.add({
+      targets: floatText,
+      y: this.bossCY - 112,
+      alpha: 0,
+      duration: 1200,
+      ease: 'Cubic.Out',
+      onComplete: () => floatText.destroy(),
     });
   }
 
@@ -1970,9 +2714,9 @@ export class GameScene extends Phaser.Scene {
 
     this.tweens.add({
       targets: floatText,
-      y: slot.iconCY - HERO_SPRITE_SIZE / 2 - 40,
+      y: slot.iconCY - HERO_SPRITE_SIZE / 2 - 52,
       alpha: 0,
-      duration: 1200,
+      duration: 1500,
       ease: 'Cubic.Out',
       onComplete: () => floatText.destroy(),
     });
