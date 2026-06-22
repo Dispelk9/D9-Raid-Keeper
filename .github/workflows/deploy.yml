@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - 'd9r-game/**'     # only trigger when game code changes
+      - 'd9r-game/**'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:       # allow manual runs from the GitHub Actions tab
 
 jobs:
