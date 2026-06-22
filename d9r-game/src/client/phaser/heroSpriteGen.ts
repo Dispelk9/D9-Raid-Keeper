@@ -410,7 +410,7 @@ function drawFrame(
     ctx.lineWidth = 3;
     ctx.lineCap = 'round';
     const xe = 9;
-    [[-1, 1], [1, -1]].forEach(([a, b]) => {
+    ([ [-1, 1], [1, -1] ] as [number, number][]).forEach(([a, b]) => {
       ctx.beginPath(); ctx.moveTo(-xe + a * 5, eyeY + b * 5); ctx.lineTo(-xe - a * 5, eyeY - b * 5); ctx.stroke();
       ctx.beginPath(); ctx.moveTo( xe + a * 5, eyeY + b * 5); ctx.lineTo( xe - a * 5, eyeY - b * 5); ctx.stroke();
     });

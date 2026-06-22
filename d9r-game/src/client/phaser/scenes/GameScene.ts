@@ -22,7 +22,6 @@ import {
 import {
   DAILY_REWARD,
   HERO_GEM_UPGRADE_COST,
-  HERO_STAR_MAX,
   LOOT_TOKEN_UPGRADE_COST,
   LOOT_BONUS_LEVEL_MAX,
   applyBattleRewards,

@@ -107,6 +107,7 @@ export class PreloadScene extends Phaser.Scene {
   ) {
     const texture = this.textures.get(key);
     const src = texture.source[0];
+    if (!src) return;
     const canvas = document.createElement('canvas');
     canvas.width = src.width;
     canvas.height = src.height;
@@ -116,7 +117,7 @@ export class PreloadScene extends Phaser.Scene {
     const id = ctx.getImageData(0, 0, src.width, src.height);
     const d = id.data;
     for (let i = 0; i < d.length; i += 4) {
-      if (d[i] > threshold && d[i + 1] > threshold && d[i + 2] > threshold) {
+      if ((d[i] ?? 0) > threshold && (d[i + 1] ?? 0) > threshold && (d[i + 2] ?? 0) > threshold) {
         d[i + 3] = 0;
       }
     }
