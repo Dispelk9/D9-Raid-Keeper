@@ -3,12 +3,81 @@ import { COLORS, FONT, H, W } from '../constants';
 
 export const SNOO_FRAME_SIZE = 512;
 export const HUD_KEY = 'ff-hud';
-export const DAMAGE_EFFECT_KEY = 'damage-effect';
 export const TITLE_SCREEN_KEY = 'title-screen';
-// damage_effect.png is 1536x1024: 6 stored columns x 4 rows.
-// Gameplay only uses columns 0-4; the old "999" column is intentionally unused.
-export const DAMAGE_EFFECT_FRAME_W = 256;
-export const DAMAGE_EFFECT_FRAME_H = 256;
+export const TITLE_SCREEN_PATH = 'assets/screens/title_screen_fast.webp';
+
+export const EFFECT_KEYS = {
+  slash: 'effect-slash',
+  strikeSkill: 'effect-strike-skill',
+  fire: 'effect-fire',
+  light: 'effect-light',
+  water: 'effect-water',
+  cosmic: 'effect-cosmic',
+  limit: 'effect-limit',
+  bossStrike: 'effect-boss-strike',
+  bossConfuse: 'effect-boss-confuse',
+  bossBlind: 'effect-boss-blind',
+  bossBerserk: 'effect-boss-berserk',
+  bossSilence: 'effect-boss-silence',
+  bossDaze: 'effect-boss-daze',
+} as const;
+
+export type EffectKey = (typeof EFFECT_KEYS)[keyof typeof EFFECT_KEYS];
+
+export const EFFECT_ASSETS: Array<{ key: EffectKey; path: string }> = [
+  {
+    key: EFFECT_KEYS.slash,
+    path: 'assets/effects/Attack_Effect/Classic/1/Classic_04.png',
+  },
+  {
+    key: EFFECT_KEYS.strikeSkill,
+    path: 'assets/effects/Attack_Effect/Classic/3/Classic_15.png',
+  },
+  {
+    key: EFFECT_KEYS.fire,
+    path: 'assets/effects/Fireball_Effect_2/Fireball_Effect_13.png',
+  },
+  {
+    key: EFFECT_KEYS.light,
+    path: 'assets/effects/LightEffects/LightEffect_13.png',
+  },
+  {
+    key: EFFECT_KEYS.water,
+    path: 'assets/effects/Water_Effect/03/Water__03.png',
+  },
+  {
+    key: EFFECT_KEYS.cosmic,
+    path: 'assets/effects/CosmicTimeMagicEffect/3/Cosmic_13.png',
+  },
+  {
+    key: EFFECT_KEYS.limit,
+    path: 'assets/effects/CosmicTimeMagicEffect/5/Cosmic_23.png',
+  },
+  {
+    key: EFFECT_KEYS.bossStrike,
+    path: 'assets/effects/LightEffects/LightEffect_20.png',
+  },
+  {
+    key: EFFECT_KEYS.bossConfuse,
+    path: 'assets/effects/CosmicTimeMagicEffect/4/Cosmic_18.png',
+  },
+  {
+    key: EFFECT_KEYS.bossBlind,
+    path: 'assets/effects/LightEffects/LightEffect_08.png',
+  },
+  {
+    key: EFFECT_KEYS.bossBerserk,
+    path: 'assets/effects/Fireball_Effect_2/Fireball_Effect_18.png',
+  },
+  {
+    key: EFFECT_KEYS.bossSilence,
+    path: 'assets/effects/Water_Effect/04/Water__04.png',
+  },
+  {
+    key: EFFECT_KEYS.bossDaze,
+    path: 'assets/effects/Attack_Effect/Classic/4/Classic_21.png',
+  },
+];
 
 export type HeroSpriteConfig = {
   key: string;
@@ -34,7 +103,7 @@ export class BootScene extends Phaser.Scene {
   }
 
   preload() {
-    // Minimal splash while title_screen.png loads (~2.3 MB)
+    // Minimal splash while the lightweight title preview loads.
     this.add.rectangle(W / 2, H / 2, W, H, COLORS.pageBg);
     this.add
       .text(W / 2, H * 0.38, '👹', { fontSize: '64px', fontFamily: FONT.emoji })
@@ -48,8 +117,8 @@ export class BootScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    // Only the title screen image — heavy game assets load in PreloadScene
-    this.load.image(TITLE_SCREEN_KEY, 'assets/screens/title_screen.png');
+    // Only the small title preview; heavy game assets load in PreloadScene.
+    this.load.image(TITLE_SCREEN_KEY, TITLE_SCREEN_PATH);
   }
 
   create() {

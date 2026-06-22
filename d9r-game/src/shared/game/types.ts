@@ -146,7 +146,9 @@ export type RaidBossTemplate = {
   stats: StatBlock & {
     countdown: number;
   };
+  attackName?: string;
   specialSkill?: BossSpecialSkill;
+  specialSkills?: BossSpecialSkill[];
 };
 
 export type RewardBundle = {
@@ -199,13 +201,18 @@ export type RaidBoss = {
   countdown: number;
   statusEffects: BattleStatusEffect[];
   isElite?: boolean;
+  attackName?: string;
   specialSkill?: BossSpecialSkill;
+  specialSkills?: BossSpecialSkill[];
 };
 
 export type BattleLogEntry = {
   id: string;
   tone: 'hero' | 'boss' | 'reward' | 'system';
   message: string;
+  attackName?: string;
+  effectType?: BossSpecialEffectType;
+  targetHeroIds?: string[];
 };
 
 export type BattleStatus = 'active' | 'won' | 'lost';

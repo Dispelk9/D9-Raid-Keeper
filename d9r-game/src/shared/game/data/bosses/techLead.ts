@@ -16,11 +16,21 @@ export const techLead: RaidBossTemplate = {
     spd: 20,
     countdown: 4,
   },
-  specialSkill: {
-    name: 'Review Freeze',
-    icon: 'TL',
-    effectType: 'silence',
-    target: 'party',
-    duration: 2,
-  },
+  attackName: 'Architecture Jab',
+  specialSkills: [
+    {
+      name: 'Review Freeze',
+      icon: 'TL',
+      effectType: 'silence',
+      target: 'party',
+      duration: 2,
+    },
+    {
+      name: 'Architecture Detour',
+      icon: 'TL',
+      effectType: 'confuse',
+      target: 'single',
+      duration: 2,
+    },
+  ],
 };

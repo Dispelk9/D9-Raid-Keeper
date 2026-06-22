@@ -2,13 +2,15 @@ import Phaser from 'phaser';
 import { context } from '@devvit/web/client';
 import { COLORS, FONT, H, HEADER_H, PAD, RARITY_COLOR, W } from '../constants';
 import {
-  DAMAGE_EFFECT_KEY,
+  EFFECT_KEYS,
+  type EffectKey,
   HERO_SPRITE_CONFIG,
   HUD_KEY,
   TITLE_SCREEN_KEY,
 } from './BootScene';
 import type { HeroSpriteConfig } from './BootScene';
-import { loadKeeperSave, persistKeeperSave } from '../../keeper/api';
+import { loadKeeperSave, persistKeeperSave, loadRaidStatus, submitRaidDamage } from '../../keeper/api';
+import type { RaidStatus } from '../../../shared/api';
 import {
   HEROES,
   getHeroSkillChoicesForLevel,
@@ -34,6 +36,7 @@ import {
   createBattleRewards,
   getEffectiveHeroRarity,
   getHeroProgress,
+  getLootDamageBonus,
   getScaledStats,
   getUpgradeCost,
   isHeroFullyUpgraded,
@@ -54,6 +57,7 @@ import type {
   BattleHero,
   BattleLogEntry,
   BattleState,
+  BossSpecialEffectType,
   HeroSkill,
   HeroPose,
   HeroTemplate,
@@ -165,6 +169,11 @@ type SkillChoiceRef = {
   metaText: Phaser.GameObjects.Text;
 };
 
+type BossAttackCue = Pick<
+  BattleLogEntry,
+  'attackName' | 'effectType' | 'targetHeroIds'
+>;
+
 export class GameScene extends Phaser.Scene {
   // State
   private profile: PlayerSave | null = null;
@@ -177,6 +186,16 @@ export class GameScene extends Phaser.Scene {
   private selectedRaidLevel = 1;
   private selectedParty: string[] = [];
   private raidRun: RaidRun | null = null;
+  private bossTurnAnimating = false;
+  private raidStatus: RaidStatus | null = null;
+
+  // Community raid panel (on map view)
+  private raidPanelBossText!: Phaser.GameObjects.Text;
+  private raidPanelBarBg!: Phaser.GameObjects.Rectangle;
+  private raidPanelBarFill!: Phaser.GameObjects.Rectangle;
+  private raidPanelPctText!: Phaser.GameObjects.Text;
+  private raidPanelUserText!: Phaser.GameObjects.Text;
+  private raidPanelTopText!: Phaser.GameObjects.Text;
 
   // Containers
   private titleGroup!: Phaser.GameObjects.Container;
@@ -370,16 +389,65 @@ export class GameScene extends Phaser.Scene {
 
     this.mapGroup.add([path, title, subtitle]);
 
+    // ── Community Raid panel ───────────────────────────────────────────────
+    const panelY  = GAME_Y + 48;
+    const panelH  = 68;
+    const barY    = panelY + 36;
+    const barW    = W - PAD * 2;
+
+    const panelBg = this.add.graphics();
+    panelBg.fillStyle(0x1e1b4b, 0.9);
+    panelBg.fillRoundedRect(PAD, panelY, W - PAD * 2, panelH, 8);
+
+    this.raidPanelBossText = this.add
+      .text(PAD + 10, panelY + 8, '🔥 Loading community raid…', {
+        fontSize: '11px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#f9a8d4',
+      });
+
+    this.raidPanelUserText = this.add
+      .text(W - PAD - 10, panelY + 8, '', {
+        fontSize: '10px', fontFamily: FONT.sans, color: '#a78bfa',
+      })
+      .setOrigin(1, 0);
+
+    this.raidPanelBarBg = this.add
+      .rectangle(PAD + barW / 2, barY + 5, barW, 10, 0x374151)
+      .setOrigin(0.5, 0.5);
+
+    this.raidPanelBarFill = this.add
+      .rectangle(PAD, barY + 5, barW, 10, 0xef4444)
+      .setOrigin(0, 0.5);
+
+    this.raidPanelPctText = this.add
+      .text(PAD + 10, barY + 13, '', {
+        fontSize: '9px', fontFamily: FONT.sans, color: '#9ca3af',
+      });
+
+    this.raidPanelTopText = this.add
+      .text(W - PAD - 10, barY + 13, '', {
+        fontSize: '9px', fontFamily: FONT.sans, color: '#fde68a',
+      })
+      .setOrigin(1, 0);
+
+    this.mapGroup.add([
+      panelBg,
+      this.raidPanelBossText,
+      this.raidPanelUserText,
+      this.raidPanelBarBg,
+      this.raidPanelBarFill,
+      this.raidPanelPctText,
+      this.raidPanelTopText,
+    ]);
+
     nodePoints.forEach((point) => {
       const node = getRaidNode(point.level);
-      const boss = getBossAppearance(point.level, node.bossId);
       const ring = this.add.graphics();
       const bg = this.add
         .circle(point.x, point.y, 34, COLORS.white)
         .setInteractive({ useHandCursor: true });
       const label = this.add
-        .text(point.x, point.y - 8, boss.icon, {
-          fontSize: boss.icon.length > 2 ? '12px' : '15px',
+        .text(point.x, point.y - 8, String(point.level), {
+          fontSize: '15px',
           fontStyle: 'bold',
           fontFamily: FONT.sans,
           color: '#18181b',
@@ -444,17 +512,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildPartyView() {
-    const back = this.add
-      .text(PAD, GAME_Y + 2, '< Map', {
-        fontSize: '13px',
-        fontStyle: 'bold',
-        fontFamily: FONT.sans,
-        color: '#2563eb',
-      })
-      .setInteractive({ useHandCursor: true })
-      .setOrigin(0, 0);
-    back.on('pointerdown', () => this.setView('map'));
-
     this.partyTitleText = this.add
       .text(W / 2, GAME_Y + 2, 'Choose 5 Heroes', {
         fontSize: '18px',
@@ -523,7 +580,11 @@ export class GameScene extends Phaser.Scene {
         color: '#ffffff',
       })
       .setOrigin(0.5);
-    this.partyGroup.add([back, this.partyTitleText, this.partyStartBg, this.partyStartText]);
+    this.partyGroup.add([
+      this.partyTitleText,
+      this.partyStartBg,
+      this.partyStartText,
+    ]);
   }
 
   private buildHelpView() {
@@ -545,7 +606,7 @@ export class GameScene extends Phaser.Scene {
           '',
           'Clear raid nodes from bottom to top. Each node contains a short chain of battles. If the team falls, gems still pay out based on how many battles were cleared.',
           '',
-          `Use gems to recruit heroes. Duplicate heroes raise rarity; duplicates at Legendary convert into gold.`,
+          `All heroes are unlocked. Use gems to advance rarity; maxed heroes convert extra gem training into tokens.`,
         ].join('\n'),
         {
           fontSize: '14px',
@@ -1820,7 +1881,7 @@ export class GameScene extends Phaser.Scene {
     const tileW = (W - PAD * 3) / 2;
     const tileH = 52;
 
-    const statLabels = ['Best Dmg', 'Total Dmg', 'Raid Lv', 'Items'];
+    const statLabels = ['Best Dmg', 'Total Dmg', 'Loot Dmg', 'Items'];
     const statTexts: Phaser.GameObjects.Text[] = [];
 
     statLabels.forEach((lbl, i) => {
@@ -1876,7 +1937,13 @@ export class GameScene extends Phaser.Scene {
     if (v !== 'raid') this.hideSkillChoice();
     if (v !== 'title') this.hideNewGameConfirm();
     if (v !== 'raid') this.resultGroup?.setVisible(false);
-    if (v === 'map') this.refreshMap();
+    if (v === 'map') {
+      this.refreshMap();
+      void loadRaidStatus().then((raid) => {
+        this.raidStatus = raid;
+        this.refreshRaidPanel();
+      });
+    }
     if (v === 'party') this.refreshPartySelect();
     if (v === 'loot') this.refreshLoot();
     if (v === 'heroes') this.refreshHeroes();
@@ -1908,6 +1975,32 @@ export class GameScene extends Phaser.Scene {
 
   private getOwnedHeroIds() {
     return new Set(this.profile?.heroes.map((hero) => hero.heroId) ?? []);
+  }
+
+  private refreshRaidPanel() {
+    const raid = this.raidStatus;
+    const barW = W - PAD * 2;
+
+    if (!raid) {
+      this.raidPanelBossText.setText('🔥 Loading community raid…');
+      this.raidPanelUserText.setText('');
+      this.raidPanelBarFill.setDisplaySize(0, 10);
+      this.raidPanelPctText.setText('');
+      this.raidPanelTopText.setText('');
+      return;
+    }
+
+    const pct     = raid.hpMax > 0 ? raid.hpRemaining / raid.hpMax : 0;
+    const fillW   = Math.max(1, Math.round(barW * pct));
+    const pctStr  = `${Math.round(pct * 100)}% HP remaining`;
+    const topName = raid.top10[0]?.username ?? '—';
+    const topDmg  = raid.top10[0]?.damage ?? 0;
+
+    this.raidPanelBossText.setText(`🔥 ${raid.bossName}  ·  Week ${raid.week.split('-')[1] ?? ''}`);
+    this.raidPanelUserText.setText(`Your dmg: ${fmtCompact(raid.userDamage)}`);
+    this.raidPanelBarFill.setPosition(PAD, this.raidPanelBarFill.y).setDisplaySize(fillW, 10);
+    this.raidPanelPctText.setText(pctStr);
+    this.raidPanelTopText.setText(`🏆 ${topName}: ${fmtCompact(topDmg)}`);
   }
 
   private refreshMap() {
@@ -2012,16 +2105,19 @@ export class GameScene extends Phaser.Scene {
       )
       .setColor(elite ? '#d97706' : '#b91c1c');
 
-    this.bossNameText.setText(
-      `${boss.name}${boss.specialSkill ? `  ${boss.specialSkill.icon}` : ''}`
-    );
+    this.bossNameText.setText(boss.name);
     this.bossHpText.setText(`${fmt(boss.hp)}/${fmt(boss.maxHp)}`);
     this.bossHpFill.scaleX = clamp(boss.hp / boss.maxHp);
     this.bossAura.setFillStyle(elite ? 0xfbbf24 : COLORS.boss, 0.22);
     if (this.textures.exists(boss.spriteKey)) {
+      const requestedFrame = boss.spriteFrame ?? 0;
+      const frame = this.textures.getFrame(boss.spriteKey, requestedFrame)
+        ? requestedFrame
+        : 0;
       this.bossImage
-        .setTexture(boss.spriteKey, boss.spriteFrame ?? 0)
-        .setDisplaySize(112, 112);
+        .setTexture(boss.spriteKey, frame)
+        .setDisplaySize(112, 112)
+        .setVisible(true);
     }
   }
 
@@ -2081,7 +2177,7 @@ export class GameScene extends Phaser.Scene {
 
   private refreshButtons() {
     if (!this.battle) return;
-    const active = this.battle.status === 'active';
+    const active = this.battle.status === 'active' && !this.bossTurnAnimating;
     const activeHero = getActiveHero(this.battle);
     const skillReady = active && canUseSkill(activeHero);
     const ultReady = active && canUseUltimate(activeHero);
@@ -2163,7 +2259,7 @@ export class GameScene extends Phaser.Scene {
       this.resultNextName.setVisible(showNext);
       if (showNext) {
         const next = getBossAppearance(this.profile.raidLevel);
-        this.resultNextIcon.setText(next.icon);
+        this.resultNextIcon.setText('>');
         this.resultNextName.setText(
           `Next: ${next.name}  ·  Lv ${this.profile.raidLevel}`
         );
@@ -2241,7 +2337,7 @@ export class GameScene extends Phaser.Scene {
     const vals = [
       fmt(this.profile.bestRaidDamage),
       fmt(this.profile.totalRaidDamage),
-      String(this.profile.raidLevel),
+      `+${fmt(getLootDamageBonus(this.profile))}`,
       String(this.profile.inventory.length),
     ];
     vals.forEach((v, i) => this.lootStatTexts[i]?.setText(v));
@@ -2260,8 +2356,10 @@ export class GameScene extends Phaser.Scene {
         fontFamily: FONT.sans,
         color: '#18181b',
       });
-      const bonusLabel = `+${item.bonus} ${item.stat.toUpperCase()}` +
-        (item.bonusLevel ? `  [+${item.bonusLevel}]` : '');
+      const bonusLevel = item.bonusLevel ?? 0;
+      const bonusLabel =
+        `DMG +${item.bonus}` +
+        (bonusLevel ? `  Upgrade +${bonusLevel}/${LOOT_BONUS_LEVEL_MAX}` : '');
       const bonusT = this.add.text(
         PAD * 2.5,
         iy + PAD + 20,
@@ -2283,7 +2381,7 @@ export class GameScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: canUpgrade });
       const upgText = this.add
         .text(upgBtnX, upgBtnY,
-          isMax ? 'MAX' : `🪙${LOOT_TOKEN_UPGRADE_COST}`, {
+          isMax ? 'MAX' : `+10  ${LOOT_TOKEN_UPGRADE_COST}T`, {
           fontSize: '9px',
           fontStyle: 'bold',
           fontFamily: FONT.sans,
@@ -2321,7 +2419,7 @@ export class GameScene extends Phaser.Scene {
     const owned = this.profile.heroes.some((entry) => entry.heroId === heroId);
 
     if (!owned) {
-      this.showNotification('Recruit this hero with gems first.');
+      this.showNotification('Hero roster refreshed. This hero unlocks automatically.');
       return;
     }
 
@@ -2379,6 +2477,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private openSkillChoice() {
+    if (this.bossTurnAnimating) return;
     if (!this.battle || this.battle.status !== 'active') return;
     const activeHero = getActiveHero(this.battle);
 
@@ -2505,8 +2604,9 @@ export class GameScene extends Phaser.Scene {
   private handleAction(
     action: BattleAction,
     selectedSkill?: HeroSkill,
-    skillChoiceIndex = 0
+    _skillChoiceIndex = 0
   ) {
+    if (this.bossTurnAnimating) return;
     if (!this.profile || !this.battle || this.battle.status !== 'active')
       return;
     const activeHero = getActiveHero(this.battle);
@@ -2518,22 +2618,31 @@ export class GameScene extends Phaser.Scene {
       (hero) => hero.id === activeHero?.id
     );
     const prevHeroes = this.battle.heroes;
-    const prevHeroHps = prevHeroes.map((h) => h.hp);
     const nextBattle = resolveHeroAction(this.battle, action, selectedSkill);
     const bossDamage = Math.max(
       0,
       Math.round(this.battle.boss.hp - nextBattle.boss.hp)
     );
-    const damagedHeroSlots: Array<{ index: number; heroId: string; ko: boolean }> = [];
+    const bossAttackCues = this.getNewBossAttackCues(
+      nextBattle.logs,
+      this.battle.logs[0]?.id
+    );
+    const damagedHeroSlots: Array<{
+      index: number;
+      heroId: string;
+      value: number;
+      ko: boolean;
+    }> = [];
+    const healingFloats: Array<{ index: number; value: number; kind: 'heal' | 'ultimate' }> = [];
 
     // Show hero attack effect on boss
     if (activeHero) {
-      const frame = this.getHeroEffectFrame(
+      const effectKey = this.getHeroEffectKey(
         activeHero,
         action,
-        skillChoiceIndex
+        selectedSkill
       );
-      this.spawnEffectSprite(frame, this.bossCX, this.bossCY);
+      this.spawnEffectSprite(effectKey, this.bossCX, this.bossCY);
       if (bossDamage > 0) {
         this.spawnBossFloat(bossDamage, action === 'ultimate' ? 'ultimate' : 'damage');
       }
@@ -2552,7 +2661,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Show boss attack effects on heroes that took damage
+    // Collect hero-side effects; boss damage waits for the telegraph banner.
     nextBattle.heroes.forEach((nextHero, i) => {
       const prev = prevHeroes[i];
       if (!prev) return;
@@ -2561,55 +2670,23 @@ export class GameScene extends Phaser.Scene {
 
       const isActorUlt =
         action === 'ultimate' && prev.id === (activeHero?.id ?? '');
-      this.spawnFloat(
-        i,
-        Math.abs(diff),
-        diff < 0 ? (isActorUlt ? 'ultimate' : 'damage') : 'heal'
-      );
 
       if (diff < 0) {
-        // Boss hit this hero
-        const slot = this.heroSlots[i];
-        if (slot) {
-          damagedHeroSlots.push({
-            index: i,
-            heroId: nextHero.id,
-            ko: nextHero.hp <= 0,
-          });
-          const bossSpecial = nextBattle.boss.specialSkill;
-          const bossFrame = bossSpecial
-            ? (GameScene.BOSS_DEBUFF_FRAME[bossSpecial.effectType] ?? 9)
-            : 9; // default: THUNDER col 3 (big lightning)
-          this.spawnEffectSprite(bossFrame, slot.iconCX, slot.iconCY);
-        }
+        damagedHeroSlots.push({
+          index: i,
+          heroId: nextHero.id,
+          value: Math.abs(diff),
+          ko: nextHero.hp <= 0,
+        });
+        return;
       }
-    });
 
-    // Show boss debuff effect + center-screen skill banner if boss used special this turn
-    const newLog = nextBattle.logs[0];
-    const prevLog = this.battle.logs[0];
-    if (
-      newLog &&
-      prevLog &&
-      newLog.id !== prevLog.id &&
-      newLog.tone === 'boss' &&
-      nextBattle.boss.specialSkill &&
-      prevHeroHps.some(
-        (hp, i) => hp === (nextBattle.heroes[i]?.hp ?? hp)
-      )
-    ) {
-      const skill = nextBattle.boss.specialSkill;
-      const frame =
-        GameScene.BOSS_DEBUFF_FRAME[skill.effectType] ?? 9;
-      this.heroSlots.forEach((slot, i) => {
-        if ((nextBattle.heroes[i]?.hp ?? 0) > 0) {
-          this.time.delayedCall(i * 100, () =>
-            this.spawnEffectSprite(frame, slot.iconCX, slot.iconCY)
-          );
-        }
+      healingFloats.push({
+        index: i,
+        value: Math.abs(diff),
+        kind: isActorUlt ? 'ultimate' : 'heal',
       });
-      this.showBossSkillBanner(nextBattle.boss.name, skill.icon, skill.name);
-    }
+    });
 
     if (action === 'ultimate' && activeHero) {
       const idx = this.battle.heroes.findIndex((h) => h.id === activeHero.id);
@@ -2622,6 +2699,29 @@ export class GameScene extends Phaser.Scene {
       if (!had) this.spawnFloat(idx, 0, 'ultimate');
     }
 
+    const playCollectedEffects = () => {
+      healingFloats.forEach(({ index, value, kind }) =>
+        this.spawnFloat(index, value, kind)
+      );
+
+      this.playBossAttackCues(bossAttackCues, () => {
+        damagedHeroSlots.forEach(({ index, heroId, value, ko }) => {
+          const slot = this.heroSlots[index];
+          this.spawnFloat(index, value, 'damage');
+          if (slot) {
+            this.spawnEffectSprite(
+              this.getBossImpactEffectKey(bossAttackCues),
+              slot.iconCX,
+              slot.iconCY
+            );
+          }
+          this.animateHeroHit(index, heroId, ko);
+        });
+
+        this.spawnBossStatusEffects(bossAttackCues, nextBattle);
+      });
+    };
+
     this.battle = nextBattle;
 
     if (nextBattle.status === 'active') {
@@ -2629,9 +2729,7 @@ export class GameScene extends Phaser.Scene {
       if (activeHero) {
         this.animateActiveHeroAction(activeIndex, activeHero.id, action);
       }
-      damagedHeroSlots.forEach(({ index, heroId, ko }) =>
-        this.animateHeroHit(index, heroId, ko)
-      );
+      playCollectedEffects();
       return;
     }
 
@@ -2662,9 +2760,7 @@ export class GameScene extends Phaser.Scene {
       if (activeHero) {
         this.animateActiveHeroAction(activeIndex, activeHero.id, action);
       }
-      damagedHeroSlots.forEach(({ index, heroId, ko }) =>
-        this.animateHeroHit(index, heroId, ko)
-      );
+      playCollectedEffects();
       return;
     }
 
@@ -2728,27 +2824,81 @@ export class GameScene extends Phaser.Scene {
     if (activeHero) {
       this.animateActiveHeroAction(activeIndex, activeHero.id, action);
     }
-    damagedHeroSlots.forEach(({ index, heroId, ko }) =>
-      this.animateHeroHit(index, heroId, ko)
-    );
+    playCollectedEffects();
 
     if (victory) {
       this.animateBossDefeat();
+      // Submit damage to the community shared raid pool
+      void submitRaidDamage(runDamage).then((res) => {
+        if (!res) return;
+        this.raidStatus = res.raid;
+        if (res.bossKilled) {
+          this.showNotification(`🏆 Community defeated ${res.raid.bossName}!`);
+        }
+      });
     }
   }
 
-  private showBossSkillBanner(bossName: string, icon: string, skillName: string) {
-    const bannerH = 56;
+  private getNewBossAttackCues(
+    nextLogs: BattleLogEntry[],
+    previousTopLogId?: string
+  ): BossAttackCue[] {
+    const fresh: BossAttackCue[] = [];
+
+    for (const entry of nextLogs) {
+      if (entry.id === previousTopLogId) break;
+      if (entry.tone === 'boss' && entry.attackName) {
+        fresh.push({
+          attackName: entry.attackName,
+          ...(entry.effectType ? { effectType: entry.effectType } : {}),
+          ...(entry.targetHeroIds ? { targetHeroIds: entry.targetHeroIds } : {}),
+        });
+      }
+    }
+
+    return fresh.reverse();
+  }
+
+  private playBossAttackCues(cues: BossAttackCue[], onComplete: () => void) {
+    if (cues.length === 0) {
+      onComplete();
+      return;
+    }
+
+    this.bossTurnAnimating = true;
+    this.refreshButtons();
+    let delay = 0;
+
+    cues.forEach((cue) => {
+      const attackName = cue.attackName ?? 'Attack';
+      this.time.delayedCall(delay, () => this.showBossAttackBanner(attackName));
+      delay += 820;
+    });
+
+    this.time.delayedCall(delay, () => {
+      this.bossTurnAnimating = false;
+      onComplete();
+      this.refreshButtons();
+    });
+  }
+
+  private showBossAttackBanner(skillName: string) {
+    const bannerH = 42;
+    const bannerW = STAGE_W - PAD * 4;
+    const bannerCX = STAGE_X + STAGE_W / 2;
+    const bannerCY = STAGE_Y + 90;
     const bg = this.add
-      .rectangle(W / 2, STAGE_Y + 80, W, bannerH, 0x7f1d1d, 0.88)
+      .rectangle(bannerCX, bannerCY, bannerW, bannerH, 0x7f1d1d, 0.9)
       .setDepth(42)
       .setAlpha(0);
     const text = this.add
-      .text(W / 2, STAGE_Y + 80, `${icon}  ${bossName}: ${skillName}`, {
+      .text(bannerCX, bannerCY, skillName, {
         fontSize: '14px',
         fontStyle: 'bold',
         fontFamily: FONT.sans,
         color: '#fca5a5',
+        wordWrap: { width: bannerW - PAD * 2 },
+        align: 'center',
       })
       .setOrigin(0.5)
       .setDepth(43)
@@ -2758,11 +2908,11 @@ export class GameScene extends Phaser.Scene {
       alpha: 1,
       duration: 180,
       onComplete: () => {
-        this.time.delayedCall(1600, () => {
+        this.time.delayedCall(420, () => {
           this.tweens.add({
             targets: [bg, text],
             alpha: 0,
-            duration: 350,
+            duration: 220,
             onComplete: () => { bg.destroy(); text.destroy(); },
           });
         });
@@ -2808,21 +2958,21 @@ export class GameScene extends Phaser.Scene {
   }
 
   private showEncounterBanner(index: number, total: number) {
-    // Phase 1: black curtain slides in from left, covering the full screen
+    // Phase 1: black curtain slides in from left, covering the battle field.
     const curtain = this.add
-      .rectangle(0, H / 2, 0, H, 0x000000)
+      .rectangle(STAGE_X, STAGE_Y + STAGE_H / 2, 0, STAGE_H, 0x000000)
       .setDepth(44)
       .setOrigin(0, 0.5);
 
     this.tweens.add({
       targets: curtain,
-      width: W,
+      width: STAGE_W,
       duration: 260,
       ease: 'Sine.In',
       onComplete: () => {
-        // Phase 2: show battle counter on top of the black screen
+        // Phase 2: show battle counter on top of the battle field curtain.
         const text = this.add
-          .text(W / 2, H / 2, `Battle  ${index} / ${total}`, {
+          .text(STAGE_X + STAGE_W / 2, STAGE_Y + STAGE_H / 2, `Battle  ${index} / ${total}`, {
             fontSize: '24px',
             fontStyle: 'bold',
             fontFamily: FONT.sans,
@@ -2835,7 +2985,7 @@ export class GameScene extends Phaser.Scene {
           // Phase 3: curtain slides out to the right, revealing new scene
           this.tweens.add({
             targets: curtain,
-            x: W,
+            x: STAGE_X + STAGE_W,
             duration: 300,
             ease: 'Sine.Out',
             onComplete: () => { curtain.destroy(); text.destroy(); },
@@ -2981,22 +3131,21 @@ export class GameScene extends Phaser.Scene {
   // Combat effects
   // ══════════════════════════════════════════════════════════════════════
 
-  // damage_effect.png is stored as 6 columns x 4 rows, but column 5 is retired.
-  // Use col 0 for attacks, cols 1-3 for skills, and col 4 for limit breaks.
-  private static readonly EFFECT_ROW_STRIDE = 6;
-  private static readonly SLASH_EFFECT_BASE = 18;
-  private static readonly HERO_MAGIC_EFFECT_BASE: Record<string, number> = {
-    'snoo-vanguard': 0,
-    'flair-archmage': 6,
-    'automod-oracle': 12,
+  private static readonly HERO_MAGIC_EFFECT: Record<string, EffectKey> = {
+    'snoo-vanguard': EFFECT_KEYS.fire,
+    'flair-archmage': EFFECT_KEYS.light,
+    'automod-oracle': EFFECT_KEYS.water,
   };
 
-  private static readonly BOSS_DEBUFF_FRAME: Record<string, number> = {
-    berserk: 4,
-    daze: 9,
-    silence: 16,
-    confuse: 13,
-    blind: 6,
+  private static readonly BOSS_DEBUFF_EFFECT: Record<
+    BossSpecialEffectType,
+    EffectKey
+  > = {
+    berserk: EFFECT_KEYS.bossBerserk,
+    daze: EFFECT_KEYS.bossDaze,
+    silence: EFFECT_KEYS.bossSilence,
+    confuse: EFFECT_KEYS.bossConfuse,
+    blind: EFFECT_KEYS.bossBlind,
   };
 
   private getHeroSpriteConfig(heroId: string): HeroSpriteConfig {
@@ -3082,34 +3231,59 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private getHeroEffectFrame(
+  private getHeroEffectKey(
     hero: BattleHero,
     action: BattleAction,
-    skillChoiceIndex: number
-  ): number {
-    const base =
-      hero.atk >= hero.mag
-        ? GameScene.SLASH_EFFECT_BASE
-        : GameScene.HERO_MAGIC_EFFECT_BASE[hero.id] ??
-          GameScene.SLASH_EFFECT_BASE;
-    const col =
-      action === 'ultimate'
-        ? 4
-        : action === 'attack'
-          ? 0
-          : 1 + (skillChoiceIndex % 3);
+    selectedSkill?: HeroSkill
+  ): EffectKey {
+    if (action === 'ultimate') return EFFECT_KEYS.limit;
+    if (action === 'attack') return EFFECT_KEYS.slash;
 
-    if (col >= GameScene.EFFECT_ROW_STRIDE - 1) return base + 4;
+    const skill = selectedSkill ?? hero.skill;
 
-    return base + col;
+    if (skill.kind === 'heal') return EFFECT_KEYS.water;
+    if (skill.kind === 'rally') return EFFECT_KEYS.light;
+    if (skill.kind === 'spell') {
+      return GameScene.HERO_MAGIC_EFFECT[hero.id] ?? EFFECT_KEYS.cosmic;
+    }
+
+    return EFFECT_KEYS.strikeSkill;
   }
 
-  private spawnEffectSprite(frame: number, x: number, y: number) {
-    if (!this.textures.exists(DAMAGE_EFFECT_KEY)) return;
+  private getBossImpactEffectKey(cues: BossAttackCue[]): EffectKey {
+    const cueWithEffect = [...cues]
+      .reverse()
+      .find((cue) => cue.effectType);
+
+    return cueWithEffect?.effectType
+      ? GameScene.BOSS_DEBUFF_EFFECT[cueWithEffect.effectType]
+      : EFFECT_KEYS.bossStrike;
+  }
+
+  private spawnBossStatusEffects(cues: BossAttackCue[], battle: BattleState) {
+    cues.forEach((cue, cueIndex) => {
+      if (!cue.effectType) return;
+      const effectKey = GameScene.BOSS_DEBUFF_EFFECT[cue.effectType];
+      const targetIds = new Set(cue.targetHeroIds ?? []);
+
+      battle.heroes.forEach((hero, heroIndex) => {
+        if (hero.hp <= 0 || !targetIds.has(hero.id)) return;
+        const slot = this.heroSlots[heroIndex];
+        if (!slot) return;
+
+        this.time.delayedCall(cueIndex * 120 + heroIndex * 70, () =>
+          this.spawnEffectSprite(effectKey, slot.iconCX, slot.iconCY, 112)
+        );
+      });
+    });
+  }
+
+  private spawnEffectSprite(effectKey: EffectKey, x: number, y: number, size = 128) {
+    if (!this.textures.exists(effectKey)) return;
 
     const img = this.add
-      .image(x, y, DAMAGE_EFFECT_KEY, frame)
-      .setDisplaySize(128, 128)
+      .image(x, y, effectKey)
+      .setDisplaySize(size, size)
       .setOrigin(0.5)
       .setDepth(16)
       .setAlpha(0.92);

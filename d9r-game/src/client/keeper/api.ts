@@ -2,8 +2,14 @@ import type {
   ApiErrorResponse,
   KeeperLoadResponse,
   KeeperSaveResponse,
+  RaidDamageResponse,
+  RaidStatus,
+  RaidStatusResponse,
 } from '../../shared/api';
-import { createInitialPlayerSave } from '../../shared/game/logic/progression';
+import {
+  createInitialPlayerSave,
+  normalizePlayerSave,
+} from '../../shared/game/logic/progression';
 import { isPlayerSave } from '../../shared/game/validators';
 import type { PlayerSave } from '../../shared/game/types';
 
@@ -17,7 +23,7 @@ const loadLocalSave = (username: string) => {
   try {
     const parsedSave: unknown = JSON.parse(rawSave);
 
-    return isPlayerSave(parsedSave) ? parsedSave : null;
+    return isPlayerSave(parsedSave) ? normalizePlayerSave(parsedSave) : null;
   } catch {
     return null;
   }
@@ -35,8 +41,9 @@ export const loadKeeperSave = async (fallbackUsername: string) => {
       const data: KeeperLoadResponse | ApiErrorResponse = await response.json();
 
       if (data.status === 'ok') {
-        storeLocalSave(data.save);
-        return data.save;
+        const save = normalizePlayerSave(data.save);
+        storeLocalSave(save);
+        return save;
       }
     }
   } catch {
@@ -73,4 +80,32 @@ export const persistKeeperSave = async (save: PlayerSave) => {
   }
 
   return save;
+};
+
+// ── Community Raid ─────────────────────────────────────────────────────────────
+
+export const loadRaidStatus = async (): Promise<RaidStatus | null> => {
+  try {
+    const response = await fetch('/api/raid');
+    if (!response.ok) return null;
+    const data: RaidStatusResponse | ApiErrorResponse = await response.json();
+    return data.status === 'ok' ? data.raid : null;
+  } catch {
+    return null;
+  }
+};
+
+export const submitRaidDamage = async (damage: number): Promise<RaidDamageResponse | null> => {
+  try {
+    const response = await fetch('/api/raid/damage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ damage: Math.floor(damage) }),
+    });
+    if (!response.ok) return null;
+    const data: RaidDamageResponse | ApiErrorResponse = await response.json();
+    return data.status === 'ok' ? data : null;
+  } catch {
+    return null;
+  }
 };

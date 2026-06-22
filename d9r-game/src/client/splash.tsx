@@ -11,7 +11,7 @@ export const Splash = () => {
         {/* Title screen image fills the hero area */}
         <div
           className="relative flex-1 min-h-[200px] bg-cover bg-center"
-          style={{ backgroundImage: 'url(/assets/screens/title_screen.png)' }}
+          style={{ backgroundImage: 'url(/assets/screens/title_screen_fast.webp)' }}
         >
           <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black/70" />
           <div className="relative z-10 flex h-full flex-col justify-end px-5 pb-4 pt-5">

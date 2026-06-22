@@ -16,11 +16,21 @@ export const cco: RaidBossTemplate = {
     spd: 24,
     countdown: 3,
   },
-  specialSkill: {
-    name: 'Budget Guillotine',
-    icon: 'CCO',
-    effectType: 'berserk',
-    target: 'single',
-    duration: 2,
-  },
+  attackName: 'Cost Cutter',
+  specialSkills: [
+    {
+      name: 'Budget Guillotine',
+      icon: 'CCO',
+      effectType: 'berserk',
+      target: 'single',
+      duration: 2,
+    },
+    {
+      name: 'Cost Freeze',
+      icon: 'CCO',
+      effectType: 'silence',
+      target: 'party',
+      duration: 2,
+    },
+  ],
 };

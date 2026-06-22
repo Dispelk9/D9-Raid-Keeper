@@ -57,6 +57,47 @@ export const createInitialPlayerSave = (username: string): PlayerSave => ({
   updatedAt: new Date().toISOString(),
 });
 
+export const normalizePlayerSave = (save: PlayerSave): PlayerSave => {
+  const initialSave = createInitialPlayerSave(save.username);
+  const initialHeroes = new Map(
+    initialSave.heroes.map((hero) => [hero.heroId, hero])
+  );
+  const existingHeroes = new Map(save.heroes.map((hero) => [hero.heroId, hero]));
+  const heroes = HEROES.map((hero) => {
+    const existing = existingHeroes.get(hero.id);
+    const initial = initialHeroes.get(hero.id)!;
+
+    if (!existing) return initial;
+
+    return {
+      heroId: hero.id,
+      level: Math.max(1, Math.min(LEVEL_CAP, Math.floor(existing.level))),
+      exp: Math.max(0, Math.floor(existing.exp)),
+      rarity: existing.rarity ?? hero.rarity,
+      starLevel: Math.max(0, Math.min(HERO_STAR_MAX, existing.starLevel ?? 0)),
+    };
+  });
+  const ownedHeroIds = new Set(heroes.map((hero) => hero.heroId));
+  const party = save.party
+    .filter((heroId) => ownedHeroIds.has(heroId))
+    .slice(0, 5);
+
+  for (const hero of HEROES) {
+    if (party.length >= 5) break;
+    if (!party.includes(hero.id)) party.push(hero.id);
+  }
+
+  return {
+    ...save,
+    heroes,
+    party,
+    inventory: save.inventory.map((item) => ({
+      ...item,
+      bonusLevel: item.bonusLevel ?? 0,
+    })),
+  };
+};
+
 export const getHeroProgress = (
   save: PlayerSave,
   heroId: string
@@ -94,6 +135,9 @@ export const getScaledStats = (
     spd: Math.round(template.stats.spd * (1 + (level - 1) * 0.025)),
   };
 };
+
+export const getLootDamageBonus = (save: PlayerSave) =>
+  save.inventory.reduce((total, item) => total + item.bonus, 0);
 
 export const getUpgradeCost = (level: number) => 75 + level * 45;
 
@@ -325,7 +369,7 @@ export const upgradeLootWithToken = (save: PlayerSave, itemId: string) => {
       updatedAt: new Date().toISOString(),
     },
     upgraded: true,
-    message: `${item.name} upgraded to +${nextLevel} (${item.stat.toUpperCase()} +${item.bonus + 10})`,
+    message: `${item.name} upgraded to +${nextLevel} (DMG +${item.bonus + 10})`,
   };
 };
 
@@ -362,8 +406,16 @@ export const getPartyPower = (save: PlayerSave) =>
 
     const progress = getHeroProgress(save, heroId);
     const stats = getScaledStats(template, progress.level);
+    const lootDamageBonus = getLootDamageBonus(save);
 
     return (
-      total + stats.hp * 0.08 + stats.atk + stats.def + stats.mag + stats.res
+      total +
+      stats.hp * 0.08 +
+      stats.atk +
+      lootDamageBonus +
+      stats.def +
+      stats.mag +
+      lootDamageBonus +
+      stats.res
     );
   }, 0);

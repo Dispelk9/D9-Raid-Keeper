@@ -3,16 +3,14 @@ import { BOSS_SPRITE_MAP, SNOO_BOSS_RIGHT_KEY } from '../../../shared/game/data/
 import { COLORS, FONT, H, W } from '../constants';
 import { generateAllHeroSprites } from '../heroSpriteGen';
 import {
-  DAMAGE_EFFECT_FRAME_H,
-  DAMAGE_EFFECT_FRAME_W,
-  DAMAGE_EFFECT_KEY,
+  EFFECT_ASSETS,
   HUD_KEY,
   SNOO_FRAME_SIZE,
   TITLE_SCREEN_KEY,
 } from './BootScene';
 
 // Loads all heavy game assets while displaying the title screen.
-// BootScene only loads title_screen.png; this scene handles the rest (~18 MB).
+// BootScene only loads the small title preview; this scene handles the rest.
 export class PreloadScene extends Phaser.Scene {
   constructor() {
     super({ key: 'Preload' });
@@ -75,10 +73,9 @@ export class PreloadScene extends Phaser.Scene {
       { frameWidth: SNOO_FRAME_SIZE, frameHeight: SNOO_FRAME_SIZE }
     );
 
-    // ── Damage effects ────────────────────────────────────────────────────
-    this.load.spritesheet(DAMAGE_EFFECT_KEY, 'assets/effects/damage_effect.png', {
-      frameWidth: DAMAGE_EFFECT_FRAME_W,
-      frameHeight: DAMAGE_EFFECT_FRAME_H,
+    // ── Battle effects ────────────────────────────────────────────────────
+    EFFECT_ASSETS.forEach(({ key, path }) => {
+      this.load.image(key, path);
     });
   }
 
@@ -92,37 +89,6 @@ export class PreloadScene extends Phaser.Scene {
     });
     this.textures.get(SNOO_BOSS_RIGHT_KEY).setFilter(nearest);
 
-    this.applyColorKey(DAMAGE_EFFECT_KEY, 220, {
-      frameWidth: DAMAGE_EFFECT_FRAME_W,
-      frameHeight: DAMAGE_EFFECT_FRAME_H,
-    });
-
     this.scene.start('Game');
-  }
-
-  private applyColorKey(
-    key: string,
-    threshold: number,
-    spriteConfig: { frameWidth: number; frameHeight: number }
-  ) {
-    const texture = this.textures.get(key);
-    const src = texture.source[0];
-    if (!src) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = src.width;
-    canvas.height = src.height;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return;
-    ctx.drawImage(src.image as HTMLImageElement, 0, 0);
-    const id = ctx.getImageData(0, 0, src.width, src.height);
-    const d = id.data;
-    for (let i = 0; i < d.length; i += 4) {
-      if ((d[i] ?? 0) > threshold && (d[i + 1] ?? 0) > threshold && (d[i + 2] ?? 0) > threshold) {
-        d[i + 3] = 0;
-      }
-    }
-    ctx.putImageData(id, 0, 0);
-    this.textures.remove(key);
-    this.textures.addSpriteSheet(key, canvas as unknown as HTMLImageElement, spriteConfig);
   }
 }

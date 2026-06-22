@@ -142,3 +142,4 @@ That is enough to feel like a real Reddit-native JRPG.
 The hook should be:
 
 “Every Redditor fights solo, but the subreddit wins together.”
+

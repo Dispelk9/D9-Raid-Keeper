@@ -16,11 +16,21 @@ export const projectManager: RaidBossTemplate = {
     spd: 18,
     countdown: 4,
   },
-  specialSkill: {
-    name: 'Sprint Crunch',
-    icon: 'PM',
-    effectType: 'daze',
-    target: 'party',
-    duration: 1,
-  },
+  attackName: 'Status Ping',
+  specialSkills: [
+    {
+      name: 'Sprint Crunch',
+      icon: 'PM',
+      effectType: 'daze',
+      target: 'party',
+      duration: 1,
+    },
+    {
+      name: 'Deadline Avalanche',
+      icon: 'PM',
+      effectType: 'silence',
+      target: 'single',
+      duration: 2,
+    },
+  ],
 };

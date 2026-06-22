@@ -16,11 +16,21 @@ export const directorOfEngineering: RaidBossTemplate = {
     spd: 22,
     countdown: 3,
   },
-  specialSkill: {
-    name: 'Forced Reorg',
-    icon: 'DIR',
-    effectType: 'confuse',
-    target: 'party',
-    duration: 2,
-  },
+  attackName: 'Org Chart Slash',
+  specialSkills: [
+    {
+      name: 'Forced Reorg',
+      icon: 'DIR',
+      effectType: 'confuse',
+      target: 'party',
+      duration: 2,
+    },
+    {
+      name: 'Headcount Shuffle',
+      icon: 'DIR',
+      effectType: 'blind',
+      target: 'single',
+      duration: 2,
+    },
+  ],
 };

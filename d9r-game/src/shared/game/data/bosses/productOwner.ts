@@ -16,11 +16,21 @@ export const productOwner: RaidBossTemplate = {
     spd: 17,
     countdown: 4,
   },
-  specialSkill: {
-    name: 'Moving Target',
-    icon: 'PO',
-    effectType: 'confuse',
-    target: 'single',
-    duration: 2,
-  },
+  attackName: 'Scope Swipe',
+  specialSkills: [
+    {
+      name: 'Moving Target',
+      icon: 'PO',
+      effectType: 'confuse',
+      target: 'single',
+      duration: 2,
+    },
+    {
+      name: 'Requirement Rewrite',
+      icon: 'PO',
+      effectType: 'blind',
+      target: 'party',
+      duration: 2,
+    },
+  ],
 };

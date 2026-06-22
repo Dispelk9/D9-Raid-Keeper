@@ -16,11 +16,21 @@ export const engineeringManager: RaidBossTemplate = {
     spd: 20,
     countdown: 3,
   },
-  specialSkill: {
-    name: 'Calibration Meeting',
-    icon: 'EM',
-    effectType: 'blind',
-    target: 'party',
-    duration: 2,
-  },
+  attackName: 'Feedback Loop',
+  specialSkills: [
+    {
+      name: 'Calibration Meeting',
+      icon: 'EM',
+      effectType: 'blind',
+      target: 'party',
+      duration: 2,
+    },
+    {
+      name: 'PIP Draft',
+      icon: 'EM',
+      effectType: 'daze',
+      target: 'single',
+      duration: 1,
+    },
+  ],
 };

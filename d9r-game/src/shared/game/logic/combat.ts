@@ -9,13 +9,19 @@ import {
   getBossTemplate,
   getRaidNode,
 } from '../data/raidBosses';
-import { getHeroProgress, getPartyPower, getScaledStats } from './progression';
+import {
+  getHeroProgress,
+  getLootDamageBonus,
+  getPartyPower,
+  getScaledStats,
+} from './progression';
 import type {
   BattleAction,
   BattleHero,
   BattleLogEntry,
   BattleStatusEffect,
   BattleState,
+  BossSpecialSkill,
   HeroSkill,
   PlayerSave,
   RaidBoss,
@@ -40,18 +46,21 @@ type CreateBattleStateOptions = {
 
 const createLogEntry = (
   message: string,
-  tone: BattleLogEntry['tone']
+  tone: BattleLogEntry['tone'],
+  meta: Omit<Partial<BattleLogEntry>, 'id' | 'message' | 'tone'> = {}
 ): BattleLogEntry => ({
   id: `${Date.now()}-${Math.random()}`,
   tone,
   message,
+  ...meta,
 });
 
 const addLog = (
   logs: BattleLogEntry[],
   message: string,
-  tone: BattleLogEntry['tone']
-) => [createLogEntry(message, tone), ...logs].slice(0, MAX_LOGS);
+  tone: BattleLogEntry['tone'],
+  meta: Omit<Partial<BattleLogEntry>, 'id' | 'message' | 'tone'> = {}
+) => [createLogEntry(message, tone, meta), ...logs].slice(0, MAX_LOGS);
 
 const getDamage = (
   attackerStat: number,
@@ -204,6 +213,7 @@ const buildBattleHero = (
 
   const progress = getHeroProgress(save, heroId);
   const stats = getScaledStats(template, progress.level);
+  const lootDamageBonus = getLootDamageBonus(save);
   const skillOptions = getHeroSkillChoicesForLevel(template, progress.level);
 
   return {
@@ -217,9 +227,9 @@ const buildBattleHero = (
     level: progress.level,
     maxHp: stats.hp,
     hp: stats.hp,
-    atk: stats.atk,
+    atk: stats.atk + lootDamageBonus,
     def: stats.def,
-    mag: stats.mag,
+    mag: stats.mag + lootDamageBonus,
     res: stats.res,
     spd: stats.spd,
     charge: 0,
@@ -241,6 +251,9 @@ const createRaidBoss = (
   const encounterCount = Math.max(1, options.encounterCount ?? 1);
   const node = getRaidNode(raidLevel);
   const bossTemplate = getBossTemplate(options.bossId ?? node.bossId);
+  const specialSkills =
+    bossTemplate.specialSkills ??
+    (bossTemplate.specialSkill ? [bossTemplate.specialSkill] : []);
   const levelMultiplier = 1 + (raidLevel - 1) * 0.16 + (encounterIndex - 1) * 0.08;
   const finalEncounterMultiplier = encounterIndex >= encounterCount ? 1.18 : 1;
   const maxHp = Math.round(
@@ -271,8 +284,12 @@ const createRaidBoss = (
     countdown: bossTemplate.stats.countdown,
     statusEffects: [],
     isElite: encounterIndex >= encounterCount || raidLevel >= 4,
-    ...(bossTemplate.specialSkill
-      ? { specialSkill: bossTemplate.specialSkill }
+    attackName: bossTemplate.attackName ?? 'Attack',
+    ...(specialSkills.length > 0
+      ? {
+          specialSkill: specialSkills[0]!,
+          specialSkills,
+        }
       : {}),
   };
 };
@@ -539,8 +556,20 @@ const chooseBossTarget = (heroes: BattleHero[]) => {
 
 // ── Boss attack helpers (no hero-index advancement, no tick) ──────────────
 
-const resolveEliteBossSkill = (state: BattleState): BattleState => {
-  const skill = state.boss.specialSkill!;
+const getBossSpecialSkills = (boss: RaidBoss) =>
+  boss.specialSkills ?? (boss.specialSkill ? [boss.specialSkill] : []);
+
+const chooseBossSpecialSkill = (state: BattleState): BossSpecialSkill | null => {
+  const skills = getBossSpecialSkills(state.boss);
+  if (skills.length === 0) return null;
+
+  return skills[(state.round + state.encounterIndex) % skills.length] ?? skills[0]!;
+};
+
+const resolveEliteBossSkill = (
+  state: BattleState,
+  skill: BossSpecialSkill
+): BattleState => {
   const living = state.heroes.filter((h) => h.hp > 0);
   if (living.length === 0) return { ...state, status: 'lost' };
 
@@ -565,7 +594,8 @@ const resolveEliteBossSkill = (state: BattleState): BattleState => {
 
   const targetLabel =
     skill.target === 'party' ? 'the whole party' : (targets[0]?.name ?? 'a hero');
-  const logMsg = `${state.boss.name} used ${skill.icon} ${skill.name} on ${targetLabel}!`;
+  const targetHeroIds = targets.flatMap((target) => target?.id ?? []);
+  const logMsg = `${state.boss.name} used ${skill.name} on ${targetLabel}!`;
   const status = heroes.every((h) => h.hp <= 0) ? 'lost' : 'active';
 
   return {
@@ -573,7 +603,11 @@ const resolveEliteBossSkill = (state: BattleState): BattleState => {
     status,
     heroes,
     boss: { ...state.boss, countdown: 4 },
-    logs: addLog(state.logs, logMsg, 'boss'),
+    logs: addLog(state.logs, logMsg, 'boss', {
+      attackName: skill.name,
+      effectType: skill.effectType,
+      targetHeroIds,
+    }),
   };
 };
 
@@ -582,13 +616,16 @@ const resolveSingleBossAttack = (state: BattleState): BattleState => {
   if (state.status !== 'active') return state;
 
   if (state.boss.countdown <= 1) {
-    if (state.boss.specialSkill) {
-      return resolveEliteBossSkill(state);
+    const skill = chooseBossSpecialSkill(state);
+
+    if (skill) {
+      return resolveEliteBossSkill(state, skill);
     }
 
     const damage = Math.max(12, Math.round(state.boss.mag * 0.78));
     let misses = 0;
     let crits = 0;
+    const targetHeroIds: string[] = [];
     const heroes = state.heroes.map((hero) => {
       if (hero.hp <= 0) return hero;
       const missed = Math.random() < getMissChance(state.boss, hero, BOSS_SPECIAL_SKILL);
@@ -596,6 +633,7 @@ const resolveSingleBossAttack = (state: BattleState): BattleState => {
       const critical = Math.random() < getCritChance(state.boss, BOSS_SPECIAL_SKILL);
       if (critical) crits += 1;
       const finalDamage = Math.round(Math.max(8, damage - hero.res * 0.25) * (critical ? 1.45 : 1));
+      targetHeroIds.push(hero.id);
       return { ...hero, hp: Math.max(0, hero.hp - finalDamage) };
     });
     const status = heroes.every((h) => h.hp <= 0) ? 'lost' : 'active';
@@ -608,7 +646,15 @@ const resolveSingleBossAttack = (state: BattleState): BattleState => {
       status,
       heroes,
       boss: { ...state.boss, countdown: 4 },
-      logs: addLog(state.logs, `${state.boss.name} cast Thread Quake${suffix}.`, 'boss'),
+      logs: addLog(
+        state.logs,
+        `${state.boss.name} cast Thread Quake${suffix}.`,
+        'boss',
+        {
+          attackName: 'Thread Quake',
+          targetHeroIds,
+        }
+      ),
     };
   }
 
@@ -625,16 +671,20 @@ const resolveSingleBossAttack = (state: BattleState): BattleState => {
     hero.id === target.id && !missed ? { ...hero, hp: Math.max(0, hero.hp - damage) } : hero
   );
   const status = heroes.every((h) => h.hp <= 0) ? 'lost' : 'active';
+  const attackName = state.boss.attackName ?? 'Attack';
   const logMessage = missed
-    ? `${state.boss.name} missed ${target.name}.`
-    : `${state.boss.name} hit ${target.name} for ${damage}${critical ? ' CRIT' : ''}.`;
+    ? `${state.boss.name}'s ${attackName} missed ${target.name}.`
+    : `${state.boss.name}'s ${attackName} hit ${target.name} for ${damage}${critical ? ' CRIT' : ''}.`;
 
   return {
     ...state,
     status,
     heroes,
     boss: { ...state.boss, countdown: state.boss.countdown - 1 },
-    logs: addLog(state.logs, logMessage, 'boss'),
+    logs: addLog(state.logs, logMessage, 'boss', {
+      attackName,
+      targetHeroIds: [target.id],
+    }),
   };
 };
 

@@ -122,6 +122,7 @@ export const getBossAppearance = (
 export const isEliteBoss = (raidLevel: number): boolean => raidLevel >= 4;
 
 export const getEliteSkill = (raidLevel: number) =>
+  getBossTemplate(getRaidNode(raidLevel).bossId).specialSkills?.[0] ??
   getBossTemplate(getRaidNode(raidLevel).bossId).specialSkill;
 
 export const RAID_BOSS_TEMPLATE = {
