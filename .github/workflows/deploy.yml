@@ -68,4 +68,4 @@ jobs:
           printf '%s' "${{ secrets.DEVVIT_SESSION_ID }}" > ~/.devvit/session-id
 
       - name: Upload to Devvit
-        run: devvit upload --bump patch
+        run: npx devvit upload --bump patch
