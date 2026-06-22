@@ -58,15 +58,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Restore the two files that `devvit login` writes locally.
-      # Store their raw contents as GitHub secrets:
-      #   DEVVIT_TOKEN      ← cat ~/.devvit/token
-      #   DEVVIT_SESSION_ID ← cat ~/.devvit/session-id
+      # Secrets to create in GitHub → Settings → Secrets and variables → Actions:
+      #   DEVVIT_TOKEN      ← exact content of  cat ~/.devvit/token
+      #   DEVVIT_SESSION_ID ← exact content of  cat ~/.devvit/session-id
       - name: Restore Devvit credentials
         run: |
           mkdir -p ~/.devvit
           printf '%s' "${{ secrets.DEVVIT_TOKEN }}" > ~/.devvit/token
           printf '%s' "${{ secrets.DEVVIT_SESSION_ID }}" > ~/.devvit/session-id
+
+      - name: Verify Devvit auth
+        run: npx devvit whoami
+        # If this fails, the DEVVIT_TOKEN / DEVVIT_SESSION_ID secrets are
+        # missing, expired, or contain the wrong content. Re-run
+        # `npx devvit login` locally, then copy the new file contents:
+        #   cat ~/.devvit/token      → update DEVVIT_TOKEN secret
+        #   cat ~/.devvit/session_id → update DEVVIT_SESSION_ID secret
 
       - name: Upload to Devvit
         run: npx devvit upload --bump patch
