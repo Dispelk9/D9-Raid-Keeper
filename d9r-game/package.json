@@ -6,13 +6,15 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "deploy": "npm run type-check && npm run lint && devvit upload",
+    "check": "npm run type-check && npm run lint",
+    "deploy": "npm run check && devvit upload --bump patch",
     "dev": "devvit playtest",
     "launch": "npm run deploy && devvit publish",
     "lint": "eslint 'src/**/*.{ts,tsx}'",
     "login": "devvit login",
     "prettier": "prettier --write .",
-    "type-check": "tsc --build"
+    "type-check": "tsc --build",
+    "upload": "devvit upload --bump patch"
   },
   "engines": {
     "node": ">=22.2.0"
