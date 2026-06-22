@@ -1,5 +1,6 @@
 import {
   STARTER_PARTY,
+  getHeroSkillChoicesForLevel,
   getHeroSkillForLevel,
   getHeroTemplate,
 } from '../data/heroes';
@@ -203,6 +204,7 @@ const buildBattleHero = (
 
   const progress = getHeroProgress(save, heroId);
   const stats = getScaledStats(template, progress.level);
+  const skillOptions = getHeroSkillChoicesForLevel(template, progress.level);
 
   return {
     id: template.id,
@@ -222,7 +224,8 @@ const buildBattleHero = (
     spd: stats.spd,
     charge: 0,
     skillCooldown: 0,
-    skill: getHeroSkillForLevel(template, progress.level),
+    skill: skillOptions[0] ?? getHeroSkillForLevel(template, progress.level),
+    skillOptions,
     ultimate: template.ultimate,
     statusEffects: [],
   };
@@ -338,12 +341,21 @@ const chargeHero = (
     action === 'ultimate' ? 0 : Math.min(ULTIMATE_CHARGE, hero.charge + amount),
 });
 
-const getActionSkill = (hero: BattleHero, action: BattleAction): HeroSkill => {
+const getActionSkill = (
+  hero: BattleHero,
+  action: BattleAction,
+  selectedSkill?: HeroSkill
+): HeroSkill => {
   if (action === 'ultimate' && hero.charge >= ULTIMATE_CHARGE) {
     return hero.ultimate;
   }
 
-  if (action === 'skill') return hero.skill;
+  if (action === 'skill') {
+    return (
+      hero.skillOptions.find((skill) => skill.id === selectedSkill?.id) ??
+      hero.skill
+    );
+  }
 
   return {
     id: 'basic-attack',
@@ -654,7 +666,8 @@ const advanceHeroAndMaybeBoss = (state: BattleState): BattleState => {
 
 export const resolveHeroAction = (
   state: BattleState,
-  action: BattleAction
+  action: BattleAction,
+  selectedSkill?: HeroSkill
 ): BattleState => {
   if (state.status !== 'active') return state;
 
@@ -692,7 +705,7 @@ export const resolveHeroAction = (
   const newCooldown =
     effectiveAction === 'skill' ? 3 : Math.max(0, actor.skillCooldown - 1);
 
-  const skill = getActionSkill(actor, effectiveAction);
+  const skill = getActionSkill(actor, effectiveAction, selectedSkill);
   const stateWithLog = { ...state, logs: preLog };
   const afterHero =
     skill.kind === 'heal'

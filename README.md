@@ -59,3 +59,9 @@ See [d9r-game/README.md](d9r-game/README.md) for the full developer reference: c
 - Core raid loop: 5-hero party vs. rotating boss roster
 - Reddit Devvit iframe scaffold, shared game logic, server-side state via Redis
 - Hero progression (EXP/level), skill unlocks, basic combat
+
+###
+Special thanks:
+https://opengameart.org
+
+Damage effects: https://www.patreon.com/cethiel

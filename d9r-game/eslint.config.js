@@ -6,6 +6,9 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 
 export default defineConfig([
+  {
+    ignores: ['src/client/game.tsx'],
+  },
   tseslint.configs.recommended,
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
@@ -34,7 +37,7 @@ export default defineConfig([
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['src/client/**/*.{ts,tsx}'],
-    ignores: ['src/server/**/*.{ts,tsx}'],
+    ignores: ['src/server/**/*.{ts,tsx}', 'src/client/game.tsx'],
     languageOptions: {
       ecmaVersion: 2023,
       globals: globals.browser,

@@ -6,6 +6,7 @@ import {
   getNextRarity,
   isMaxRarity,
 } from '../data/heroes';
+export { HEROES, STARTER_PARTY };
 import { RAID_NODES } from '../data/raidBosses';
 import type {
   HeroRarity,
@@ -20,7 +21,10 @@ const DAILY_GOLD = 140;
 const DAILY_GEMS = 30;
 const DAILY_ENERGY = 35;
 const LEVEL_CAP = 50;
-export const HERO_ROLL_GEM_COST = 80;
+export const HERO_GEM_UPGRADE_COST = 40;
+export const HERO_STAR_MAX = 10;
+export const LOOT_TOKEN_UPGRADE_COST = 30;
+export const LOOT_BONUS_LEVEL_MAX = 10;
 const MAX_RAID_LEVEL = RAID_NODES.length;
 
 export const DAILY_REWARD = {
@@ -36,11 +40,13 @@ export const createInitialPlayerSave = (username: string): PlayerSave => ({
   gems: 120,
   energy: 100,
   raidTokens: 0,
-  heroes: HEROES.filter((hero) => STARTER_PARTY.includes(hero.id)).map((hero) => ({
+  // All heroes unlocked from the start — no roll/recruit needed.
+  heroes: HEROES.map((hero) => ({
     heroId: hero.id,
     level: 4,
     exp: 0,
     rarity: hero.rarity,
+    starLevel: 0,
   })),
   party: STARTER_PARTY,
   inventory: [],
@@ -142,8 +148,8 @@ export const createBattleRewards = (
   const equipment = victory ? pickEquipmentReward(inventorySize) : null;
   const clearRatio = battleCount > 0 ? battlesCleared / battleCount : 0;
   const partialGemReward = Math.max(
-    2,
-    Math.round(3 + battlesCleared * 5 + totalDamage * 0.012)
+    1,
+    Math.round(1 + battlesCleared * 6 + clearRatio * 8)
   );
 
   return {
@@ -216,76 +222,110 @@ export const applyBattleRewards = (
   };
 };
 
-export const rollHero = (save: PlayerSave) => {
-  if (save.gems < HERO_ROLL_GEM_COST) {
-    return {
-      save,
-      rolled: false,
-      message: `Need ${HERO_ROLL_GEM_COST} gems to recruit.`,
-    };
+export const isHeroFullyUpgraded = (save: PlayerSave, heroId: string): boolean => {
+  const progress = save.heroes.find((h) => h.heroId === heroId);
+  if (!progress) return false;
+  const template = getHeroTemplate(heroId);
+  const rarity = progress.rarity ?? template?.rarity ?? 'Common';
+  return isMaxRarity(rarity) && (progress.starLevel ?? 0) >= HERO_STAR_MAX;
+};
+
+export const canUpgradeHeroWithGem = (save: PlayerSave, heroId: string): boolean => {
+  if (save.gems < HERO_GEM_UPGRADE_COST) return false;
+  return !isHeroFullyUpgraded(save, heroId);
+};
+
+export const upgradeHeroWithGem = (save: PlayerSave, heroId: string) => {
+  const template = getHeroTemplate(heroId);
+  if (!template) return { save, upgraded: false, message: 'Unknown hero.' };
+
+  if (save.gems < HERO_GEM_UPGRADE_COST) {
+    return { save, upgraded: false, message: `Need ${HERO_GEM_UPGRADE_COST} gems.` };
   }
 
-  const template = HEROES[Math.floor(Math.random() * HEROES.length)] ?? HEROES[0]!;
-  const existing = save.heroes.find((hero) => hero.heroId === template.id);
+  const progress = save.heroes.find((h) => h.heroId === heroId);
+  if (!progress) return { save, upgraded: false, message: 'Hero not found.' };
+
   const baseSave = {
     ...save,
-    gems: save.gems - HERO_ROLL_GEM_COST,
+    gems: save.gems - HERO_GEM_UPGRADE_COST,
     updatedAt: new Date().toISOString(),
   };
+  const currentRarity = progress.rarity ?? template.rarity;
 
-  if (!existing) {
+  if (!isMaxRarity(currentRarity)) {
+    const nextRarity = getNextRarity(currentRarity);
     return {
       save: {
         ...baseSave,
-        heroes: [
-          ...save.heroes,
-          {
-            heroId: template.id,
-            level: 1,
-            exp: 0,
-            rarity: template.rarity,
-          },
-        ],
+        heroes: save.heroes.map((h) =>
+          h.heroId === heroId ? { ...h, rarity: nextRarity } : h
+        ),
       },
-      rolled: true,
-      hero: template,
-      message: `${template.name} joined the team.`,
+      upgraded: true,
+      message: `${template.name} advanced to ${nextRarity}!`,
     };
   }
 
-  const currentRarity = existing.rarity ?? template.rarity;
-
-  if (isMaxRarity(currentRarity)) {
-    const gold = 420;
-
+  const starLevel = progress.starLevel ?? 0;
+  if (starLevel < HERO_STAR_MAX) {
+    const nextStar = starLevel + 1;
     return {
       save: {
         ...baseSave,
-        gold: baseSave.gold + gold,
+        heroes: save.heroes.map((h) =>
+          h.heroId === heroId ? { ...h, starLevel: nextStar } : h
+        ),
       },
-      rolled: true,
-      hero: template,
-      message: `${template.name} duplicate converted into ${gold} gold.`,
+      upgraded: true,
+      message: `${template.name} reached +${nextStar}!`,
     };
   }
 
-  const nextRarity = getNextRarity(currentRarity);
-
+  // Hero is fully maxed — convert gem cost into a raid token instead
   return {
     save: {
       ...baseSave,
-      heroes: save.heroes.map((hero) =>
-        hero.heroId === template.id
-          ? {
-              ...hero,
-              rarity: nextRarity,
-            }
-          : hero
-      ),
+      raidTokens: save.raidTokens + 1,
     },
-    rolled: true,
-    hero: template,
-    message: `${template.name} advanced to ${nextRarity}.`,
+    upgraded: true,
+    message: `${template.name} is maxed — gem converted to token.`,
+  };
+};
+
+export const canUpgradeLootWithToken = (save: PlayerSave, itemId: string): boolean => {
+  if (save.raidTokens < LOOT_TOKEN_UPGRADE_COST) return false;
+  const item = save.inventory.find((i) => i.id === itemId);
+  return !!item && (item.bonusLevel ?? 0) < LOOT_BONUS_LEVEL_MAX;
+};
+
+export const upgradeLootWithToken = (save: PlayerSave, itemId: string) => {
+  const item = save.inventory.find((i) => i.id === itemId);
+  if (!item) return { save, upgraded: false, message: 'Item not found.' };
+
+  if (save.raidTokens < LOOT_TOKEN_UPGRADE_COST) {
+    return { save, upgraded: false, message: `Need ${LOOT_TOKEN_UPGRADE_COST} tokens.` };
+  }
+
+  const currentLevel = item.bonusLevel ?? 0;
+  if (currentLevel >= LOOT_BONUS_LEVEL_MAX) {
+    return { save, upgraded: false, message: `${item.name} is already at max upgrade.` };
+  }
+
+  const nextLevel = currentLevel + 1;
+  return {
+    save: {
+      ...save,
+      raidTokens: save.raidTokens - LOOT_TOKEN_UPGRADE_COST,
+      inventory: save.inventory.map((i) =>
+        i.id === itemId
+          ? { ...i, bonus: i.bonus + 10, bonusLevel: nextLevel }
+          : i
+      ),
+      updatedAt: new Date().toISOString(),
+    },
+    upgraded: true,
+    message: `${item.name} upgraded to +${nextLevel} (${item.stat.toUpperCase()} +${item.bonus + 10})`,
   };
 };
 

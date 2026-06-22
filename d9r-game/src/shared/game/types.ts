@@ -85,6 +85,7 @@ export type HeroTemplate = {
   spriteFrame: number;
   stats: StatBlock;
   skill: HeroSkill;
+  secondarySkill: HeroSkill;
   skillUnlocks?: HeroSkillUnlock[];
   ultimate: HeroSkill;
 };
@@ -94,6 +95,7 @@ export type HeroProgress = {
   level: number;
   exp: number;
   rarity?: HeroRarity;
+  starLevel?: number; // 0–10, unlocked after max rarity via gem upgrades
 };
 
 export type EquipmentItem = {
@@ -103,6 +105,7 @@ export type EquipmentItem = {
   rarity: HeroRarity;
   stat: keyof StatBlock;
   bonus: number;
+  bonusLevel?: number; // 0–10 token upgrades applied
 };
 
 export type PlayerSave = {
@@ -174,6 +177,7 @@ export type BattleHero = {
   charge: number;
   skillCooldown: number;
   skill: HeroSkill;
+  skillOptions: HeroSkill[];
   ultimate: HeroSkill;
   statusEffects: BattleStatusEffect[];
 };

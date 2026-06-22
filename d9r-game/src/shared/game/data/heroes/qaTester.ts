@@ -18,6 +18,15 @@ export const qaTester: HeroTemplate = {
     accuracyBonus: 0.08,
     critBonus: 0.04,
   },
+  secondarySkill: {
+    id: 'smoke-test',
+    name: 'Smoke Test',
+    summary: 'Precise strike, quick crit chance',
+    power: 1.18,
+    kind: 'strike',
+    accuracyBonus: 0.14,
+    critBonus: 0.06,
+  },
   skillUnlocks: [
     {
       level: 8,

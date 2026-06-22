@@ -17,6 +17,18 @@ export const frontendDeveloper: HeroTemplate = {
     kind: 'spell',
     accuracyBonus: 0.04,
   },
+  secondarySkill: {
+    id: 'accessibility-sweep',
+    name: 'Accessibility Sweep',
+    summary: 'Spell, raises party evasion',
+    power: 1.16,
+    kind: 'spell',
+    effect: {
+      target: 'party',
+      evasionModifier: 0.08,
+      duration: 2,
+    },
+  },
   skillUnlocks: [
     {
       level: 6,

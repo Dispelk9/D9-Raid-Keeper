@@ -1,1 +1,1 @@
-read game-theme.md
+read mechanic.md

@@ -16,6 +16,18 @@ export const devopsEngineer: HeroTemplate = {
     power: 1.1,
     kind: 'rally',
   },
+  secondarySkill: {
+    id: 'incident-runbook',
+    name: 'Incident Runbook',
+    summary: 'Rally, raises party accuracy',
+    power: 1.06,
+    kind: 'rally',
+    effect: {
+      target: 'party',
+      accuracyModifier: 0.1,
+      duration: 2,
+    },
+  },
   skillUnlocks: [
     {
       level: 8,

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { BootScene } from './phaser/scenes/BootScene';
+import { PreloadScene } from './phaser/scenes/PreloadScene';
 import { GameScene } from './phaser/scenes/GameScene';
 
 new Phaser.Game({
@@ -12,5 +13,9 @@ new Phaser.Game({
     width: 430,
     height: 760,
   },
-  scene: [BootScene, GameScene],
+  input: {
+    activePointers: 2,
+    touch: { capture: true },
+  },
+  scene: [BootScene, PreloadScene, GameScene],
 });

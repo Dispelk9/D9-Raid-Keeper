@@ -17,6 +17,18 @@ export const backendDeveloper: HeroTemplate = {
     kind: 'strike',
     accuracyBonus: 0.03,
   },
+  secondarySkill: {
+    id: 'cache-invalidation',
+    name: 'Cache Invalidation',
+    summary: 'Strike, makes the boss easier to hit',
+    power: 1.2,
+    kind: 'strike',
+    effect: {
+      target: 'boss',
+      evasionModifier: -0.1,
+      duration: 2,
+    },
+  },
   skillUnlocks: [
     {
       level: 7,

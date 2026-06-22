@@ -3,18 +3,15 @@ import { context } from '@devvit/web/client';
 import { COLORS, FONT, H, HEADER_H, PAD, RARITY_COLOR, W } from '../constants';
 import {
   DAMAGE_EFFECT_KEY,
-  HERO_POSE_FRAME_H,
-  HERO_POSE_FRAME_W,
-  HERO_POSE_LABEL_COLS,
+  HERO_SPRITE_CONFIG,
   HUD_KEY,
-  SNOO_CENTER_SHEET_KEY,
-  SNOO_FRAME_SHEET_KEY,
   TITLE_SCREEN_KEY,
 } from './BootScene';
+import type { HeroSpriteConfig } from './BootScene';
 import { loadKeeperSave, persistKeeperSave } from '../../keeper/api';
 import {
   HEROES,
-  getHeroSkillForLevel,
+  getHeroSkillChoicesForLevel,
   getNextHeroSkillUnlock,
 } from '../../../shared/game/data/heroes';
 import {
@@ -24,10 +21,15 @@ import {
 } from '../../../shared/game/data/raidBosses';
 import {
   DAILY_REWARD,
-  HERO_ROLL_GEM_COST,
+  HERO_GEM_UPGRADE_COST,
+  HERO_STAR_MAX,
+  LOOT_TOKEN_UPGRADE_COST,
+  LOOT_BONUS_LEVEL_MAX,
   applyBattleRewards,
   canClaimDailyReward,
   canUpgradeHero,
+  canUpgradeHeroWithGem,
+  canUpgradeLootWithToken,
   claimDailyReward,
   createInitialPlayerSave,
   createBattleRewards,
@@ -35,8 +37,10 @@ import {
   getHeroProgress,
   getScaledStats,
   getUpgradeCost,
-  rollHero,
+  isHeroFullyUpgraded,
   upgradeHero,
+  upgradeHeroWithGem,
+  upgradeLootWithToken,
 } from '../../../shared/game/logic/progression';
 import {
   MAX_LOGS,
@@ -48,8 +52,10 @@ import {
 } from '../../../shared/game/logic/combat';
 import type {
   BattleAction,
+  BattleHero,
   BattleLogEntry,
   BattleState,
+  HeroSkill,
   HeroPose,
   HeroTemplate,
   PlayerSave,
@@ -83,17 +89,25 @@ const HERO_SLOT_H = Math.floor((CONTENT_H - 4 * 5) / 5);
 const HERO_SPRITE_SIZE = 72;
 const HERO_BAR_X_OFF = HERO_SPRITE_SIZE - 2;
 const STATS_BAR_Y = STAGE_Y + STAGE_H + PAD;
-const HERO_FRAME_DISPLAY_W = 82;
-const HERO_FRAME_DISPLAY_H = 72;
-const HERO_POSE_COL: Record<HeroPose, number> = {
+const HERO_FRAME_DISPLAY_W = 70;
+const HERO_FRAME_DISPLAY_H = 70;
+const FALLBACK_HERO_ID = 'snoo-vanguard';
+const COMMON_HERO_POSE_COL: Record<HeroPose, number> = {
   idle: 0,
-  walk1: 1,
-  walk2: 2,
-  attack: 3,
-  cast: 4,
-  hit: 5,
-  ko: 5,
-  victory: 6,
+  walk1: 0,
+  walk2: 0,
+  attack: 1,
+  cast: 2,
+  hit: 0,
+  ko: 3,
+  victory: 4,
+};
+
+const DEVOPS_HERO_POSE_COL: Record<HeroPose, number> = {
+  ...COMMON_HERO_POSE_COL,
+  hit: 3,
+  ko: 4,
+  victory: 5,
 };
 
 type HeroSlotRef = {
@@ -112,9 +126,12 @@ type HeroSlotRef = {
 type HeroCardRef = {
   heroId: string;
   levelText: Phaser.GameObjects.Text;
+  rarityText: Phaser.GameObjects.Text;
   btnBg: Phaser.GameObjects.Rectangle;
   partyBg: Phaser.GameObjects.Rectangle;
   partyText: Phaser.GameObjects.Text;
+  gemBg: Phaser.GameObjects.Rectangle;
+  gemText: Phaser.GameObjects.Text;
 };
 
 type MapNodeRef = {
@@ -142,6 +159,13 @@ type RaidRun = {
   party: string[];
 };
 
+type SkillChoiceRef = {
+  hit: Phaser.GameObjects.Rectangle;
+  nameText: Phaser.GameObjects.Text;
+  summaryText: Phaser.GameObjects.Text;
+  metaText: Phaser.GameObjects.Text;
+};
+
 export class GameScene extends Phaser.Scene {
   // State
   private profile: PlayerSave | null = null;
@@ -167,6 +191,8 @@ export class GameScene extends Phaser.Scene {
   private settingsGroup!: Phaser.GameObjects.Container;
   private resultGroup!: Phaser.GameObjects.Container;
   private detailGroup!: Phaser.GameObjects.Container;
+  private skillChoiceGroup!: Phaser.GameObjects.Container;
+  private newGameConfirmGroup!: Phaser.GameObjects.Container;
 
   // Header
   private resourceText!: Phaser.GameObjects.Text;
@@ -222,7 +248,6 @@ export class GameScene extends Phaser.Scene {
   private partyStartBg!: Phaser.GameObjects.Rectangle;
   private partyStartText!: Phaser.GameObjects.Text;
   private partyTitleText!: Phaser.GameObjects.Text;
-  private recruitText!: Phaser.GameObjects.Text;
 
   // Hero detail sheet
   private detailHeroName!: Phaser.GameObjects.Text;
@@ -234,6 +259,8 @@ export class GameScene extends Phaser.Scene {
   private detailUpgradeBg!: Phaser.GameObjects.Rectangle;
   private detailUpgradeText!: Phaser.GameObjects.Text;
   private detailHeroIcon!: Phaser.GameObjects.Image;
+  private skillChoiceHeroText!: Phaser.GameObjects.Text;
+  private skillChoiceRefs: SkillChoiceRef[] = [];
 
   // Loot view
   private lootStatTexts: Phaser.GameObjects.Text[] = [];
@@ -270,6 +297,8 @@ export class GameScene extends Phaser.Scene {
     this.buildSettingsPanel();
     this.buildResultOverlay();
     this.buildDetailSheet();
+    this.buildSkillChoiceOverlay();
+    this.buildNewGameConfirmOverlay();
 
     this.setView('title');
 
@@ -284,33 +313,11 @@ export class GameScene extends Phaser.Scene {
       .setDisplaySize(W, H)
       .setOrigin(0.5);
 
-    const shade = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.34);
-
-    const title = this.add
-      .text(W / 2, 118, 'D9 Raid Keeper', {
-        fontSize: '34px',
-        fontStyle: 'bold',
-        fontFamily: FONT.sans,
-        color: '#ffffff',
-        stroke: '#111827',
-        strokeThickness: 5,
-      })
-      .setOrigin(0.5);
-
-    const subtitle = this.add
-      .text(W / 2, 158, 'Developer-knights vs the layoff ladder', {
-        fontSize: '14px',
-        fontStyle: 'bold',
-        fontFamily: FONT.sans,
-        color: '#f8fafc',
-        stroke: '#111827',
-        strokeThickness: 3,
-      })
-      .setOrigin(0.5);
+    const shade = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.08);
 
     const makeButton = (y: number, label: string, onClick: () => void) => {
       const bgRect = this.add
-        .rectangle(W / 2, y, 238, 46, COLORS.ink, 0.92)
+        .rectangle(W / 2, y, 238, 46, COLORS.ink, 0.88)
         .setInteractive({ useHandCursor: true });
       const text = this.add
         .text(W / 2, y, label, {
@@ -324,8 +331,8 @@ export class GameScene extends Phaser.Scene {
       this.titleGroup.add([bgRect, text]);
     };
 
-    this.titleGroup.add([bg, shade, title, subtitle]);
-    makeButton(520, 'New Game', () => this.handleNewGame());
+    this.titleGroup.add([bg, shade]);
+    makeButton(520, 'New Game', () => this.showNewGameConfirm());
     makeButton(574, 'Continue', () => this.handleContinue());
     makeButton(628, 'Help', () => this.setView('help'));
   }
@@ -472,9 +479,10 @@ export class GameScene extends Phaser.Scene {
         .rectangle(x + cardW / 2, y + cardH / 2, cardW, cardH, COLORS.white)
         .setInteractive({ useHandCursor: true });
       const sprite = this.add
-        .image(x + 39, y + 40, SNOO_CENTER_SHEET_KEY, hero.spriteFrame)
+        .image(x + 39, y + 40, this.getHeroSpriteKey(hero.id))
         .setDisplaySize(62, 62)
         .setOrigin(0.5);
+      this.setHeroPose(sprite, hero.id, 'idle');
       const label = this.add
         .text(x + 76, y + 13, hero.name, {
           fontSize: '11px',
@@ -588,14 +596,15 @@ export class GameScene extends Phaser.Scene {
     objs.push(gear);
 
     this.resourceText = this.add
-      .text(PAD + 40, HEADER_H / 2, '🪙0  🎫0  💎0  ⚡0', {
-        fontSize: '11px',
+      .text(PAD + 42, 10, 'Gold 0   Tok 0\nGem 0    EN 0', {
+        fontSize: '10px',
         fontStyle: 'bold',
-        fontFamily: FONT.emoji,
+        fontFamily: FONT.sans,
         color: '#52525b',
       })
-      .setOrigin(0, 0.5)
-      .setWordWrapWidth(W - 108);
+      .setOrigin(0, 0)
+      .setLineSpacing(2)
+      .setWordWrapWidth(W - 122);
     objs.push(this.resourceText);
 
     // RAID level badge — far right
@@ -885,9 +894,11 @@ export class GameScene extends Phaser.Scene {
         ? `+${DAILY_REWARD.gold}🪙 +${DAILY_REWARD.gems}💎 +${DAILY_REWARD.energy}⚡`
         : 'Resets tomorrow'
     );
-    available
-      ? this.dailyActHit.setInteractive({ useHandCursor: true })
-      : this.dailyActHit.disableInteractive();
+    if (available) {
+      this.dailyActHit.setInteractive({ useHandCursor: true });
+    } else {
+      this.dailyActHit.disableInteractive();
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -1019,10 +1030,10 @@ export class GameScene extends Phaser.Scene {
       const cy = sy + HERO_SLOT_H / 2;
 
       const icon = this.add
-        .image(cx, cy, SNOO_FRAME_SHEET_KEY)
+        .image(cx, cy, this.getHeroSpriteKey(FALLBACK_HERO_ID))
         .setDisplaySize(HERO_FRAME_DISPLAY_W, HERO_FRAME_DISPLAY_H)
         .setOrigin(0.5);
-      this.setHeroPose(icon, 0, 'idle');
+      this.setHeroPose(icon, FALLBACK_HERO_ID, 'idle');
 
       const hpText = this.add
         .text(textX, cy - 8, '—', {
@@ -1095,7 +1106,7 @@ export class GameScene extends Phaser.Scene {
       startX + btnW + gap,
       'Skill'
     );
-    this.skillBtnBg.on('pointerdown', () => this.handleAction('skill'));
+    this.skillBtnBg.on('pointerdown', () => this.openSkillChoice());
 
     [this.ultBtnBg, this.ultBtnText] = makeBtn(
       startX + (btnW + gap) * 2,
@@ -1260,6 +1271,179 @@ export class GameScene extends Phaser.Scene {
       .setVisible(false);
   }
 
+  private buildSkillChoiceOverlay() {
+    const objs: Phaser.GameObjects.GameObject[] = [];
+    const overlay = this.add
+      .rectangle(W / 2, H / 2, W, H, 0x000000, 0.5)
+      .setInteractive();
+    overlay.on('pointerdown', () => this.hideSkillChoice());
+    objs.push(overlay);
+
+    const panelX = PAD * 2;
+    const panelY = H - 264;
+    const panelW = W - PAD * 4;
+    const panelH = 220;
+    const panelBg = this.add.graphics();
+    panelBg.fillStyle(0x111827, 0.92);
+    panelBg.fillRoundedRect(panelX, panelY, panelW, panelH, 10);
+    panelBg.lineStyle(1, 0xf8fafc, 0.35);
+    panelBg.strokeRoundedRect(panelX, panelY, panelW, panelH, 10);
+    objs.push(panelBg);
+
+    this.skillChoiceHeroText = this.add
+      .text(panelX + PAD * 2, panelY + 14, 'Choose Skill', {
+        fontSize: '14px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
+      })
+      .setOrigin(0, 0);
+    objs.push(this.skillChoiceHeroText);
+
+    const close = this.add
+      .text(panelX + panelW - PAD * 2, panelY + 14, 'Close', {
+        fontSize: '11px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#cbd5e1',
+      })
+      .setOrigin(1, 0)
+      .setInteractive({ useHandCursor: true });
+    close.on('pointerdown', () => this.hideSkillChoice());
+    objs.push(close);
+
+    this.skillChoiceRefs = [0, 1].map((index) => {
+      const cy = panelY + 70 + index * 72;
+      const bg = this.add
+        .image(W / 2, cy, HUD_KEY)
+        .setDisplaySize(panelW - PAD * 2, 58)
+        .setOrigin(0.5);
+      const hit = this.add
+        .rectangle(W / 2, cy, panelW - PAD * 2, 58, 0x000000, 0.001)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+        ptr.event.stopPropagation();
+        this.chooseSkill(index);
+      });
+      const nameText = this.add
+        .text(panelX + PAD * 3, cy - 18, '', {
+          fontSize: '12px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#ffffff',
+          wordWrap: { width: panelW - PAD * 10 },
+        })
+        .setOrigin(0, 0);
+      const summaryText = this.add
+        .text(panelX + PAD * 3, cy, '', {
+          fontSize: '10px',
+          fontFamily: FONT.sans,
+          color: '#bfdbfe',
+          wordWrap: { width: panelW - PAD * 8 },
+        })
+        .setOrigin(0, 0);
+      const metaText = this.add
+        .text(panelX + panelW - PAD * 3, cy - 18, '', {
+          fontSize: '10px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#fbbf24',
+        })
+        .setOrigin(1, 0);
+      objs.push(bg, hit, nameText, summaryText, metaText);
+
+      return {
+        hit,
+        nameText,
+        summaryText,
+        metaText,
+      };
+    });
+
+    this.skillChoiceGroup = this.add
+      .container(0, 0, objs)
+      .setDepth(30)
+      .setVisible(false);
+  }
+
+  private buildNewGameConfirmOverlay() {
+    const objs: Phaser.GameObjects.GameObject[] = [];
+    const overlay = this.add
+      .rectangle(W / 2, H / 2, W, H, 0x000000, 0.52)
+      .setInteractive();
+    overlay.on('pointerdown', () => this.hideNewGameConfirm());
+    objs.push(overlay);
+
+    const panelW = W - PAD * 6;
+    const panelH = 190;
+    const panelX = W / 2 - panelW / 2;
+    const panelY = H / 2 - panelH / 2;
+    const panel = this.add.graphics();
+    panel.fillStyle(COLORS.white, 0.98);
+    panel.fillRoundedRect(panelX, panelY, panelW, panelH, 10);
+    panel.lineStyle(1, COLORS.border, 1);
+    panel.strokeRoundedRect(panelX, panelY, panelW, panelH, 10);
+    objs.push(panel);
+
+    objs.push(
+      this.add
+        .text(W / 2, panelY + 22, 'Start New Game?', {
+          fontSize: '18px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#18181b',
+        })
+        .setOrigin(0.5, 0)
+    );
+    objs.push(
+      this.add
+        .text(
+          W / 2,
+          panelY + 58,
+          'Your current continue point will be replaced.',
+          {
+            fontSize: '12px',
+            fontFamily: FONT.sans,
+            color: '#52525b',
+            wordWrap: { width: panelW - PAD * 4 },
+            align: 'center',
+          }
+        )
+        .setOrigin(0.5, 0)
+    );
+
+    const cancelBg = this.add
+      .rectangle(W / 2 - 78, panelY + panelH - 42, 136, 40, 0xe5e7eb)
+      .setInteractive({ useHandCursor: true });
+    cancelBg.on('pointerdown', () => this.hideNewGameConfirm());
+    const cancelText = this.add
+      .text(W / 2 - 78, panelY + panelH - 42, 'Cancel', {
+        fontSize: '13px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#18181b',
+      })
+      .setOrigin(0.5);
+    const resetBg = this.add
+      .rectangle(W / 2 + 78, panelY + panelH - 42, 136, 40, COLORS.ink)
+      .setInteractive({ useHandCursor: true });
+    resetBg.on('pointerdown', () => this.confirmNewGame());
+    const resetText = this.add
+      .text(W / 2 + 78, panelY + panelH - 42, 'New Game', {
+        fontSize: '13px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
+      })
+      .setOrigin(0.5);
+    objs.push(cancelBg, cancelText, resetBg, resetText);
+
+    this.newGameConfirmGroup = this.add
+      .container(0, 0, objs)
+      .setDepth(32)
+      .setVisible(false);
+  }
+
   // ══════════════════════════════════════════════════════════════════════
   // Build: Heroes View
   // ══════════════════════════════════════════════════════════════════════
@@ -1269,7 +1453,7 @@ export class GameScene extends Phaser.Scene {
 
     // Hero cards grid (2 col × 3 row)
     const cardW = Math.floor((W - PAD * 3) / 2);
-    const cardH = 96;
+    const cardH = 104;
     const gridStartY = topY;
 
     HEROES.forEach((hero, i) => {
@@ -1279,20 +1463,6 @@ export class GameScene extends Phaser.Scene {
       const cy = gridStartY + row * (cardH + PAD);
       this.buildHeroCard(hero, cx, cy, cardW, cardH);
     });
-
-    const recruitBg = this.add
-      .rectangle(W / 2, H - 44, W - PAD * 2, 42, COLORS.btnSkill)
-      .setInteractive({ useHandCursor: true });
-    recruitBg.on('pointerdown', () => this.handleRecruitHero());
-    this.recruitText = this.add
-      .text(W / 2, H - 44, `Recruit · ${HERO_ROLL_GEM_COST} gems`, {
-        fontSize: '14px',
-        fontStyle: 'bold',
-        fontFamily: FONT.sans,
-        color: '#ffffff',
-      })
-      .setOrigin(0.5);
-    this.heroesGroup.add([recruitBg, this.recruitText]);
   }
 
   private buildHeroCard(
@@ -1319,9 +1489,11 @@ export class GameScene extends Phaser.Scene {
     hitArea.on('pointerdown', () => this.showDetail(hero.id));
 
     const iconT = this.add
-      .image(cx, cy, SNOO_CENTER_SHEET_KEY, hero.spriteFrame)
-      .setDisplaySize(spriteSize, spriteSize)
+      .image(cx, cy, this.getHeroSpriteKey(hero.id))
       .setOrigin(0.5);
+    this.setHeroPose(iconT, hero.id, 'idle');
+    const heroConfig = this.getHeroSpriteConfig(hero.id);
+    iconT.setScale(spriteSize / heroConfig.frameW);
 
     const nameText = this.add
       .text(textX, y + 10, hero.name, {
@@ -1354,14 +1526,20 @@ export class GameScene extends Phaser.Scene {
       })
       .setOrigin(0, 0);
 
-    const smallBtnW = 62;
+    // 3 buttons: Party | Upgrade (gold) | Gem
+    const totalBtnW = w - PAD * 2;
+    const btnW3 = Math.floor(totalBtnW / 3) - 2;
     const btnY = y + h - PAD - 12;
+    const btn1X = x + PAD + btnW3 / 2;
+    const btn2X = btn1X + btnW3 + 4;
+    const btn3X = btn2X + btnW3 + 4;
+
     const partyBg = this.add
-      .rectangle(x + PAD + smallBtnW / 2, btnY, smallBtnW, 24, COLORS.btnSkill)
+      .rectangle(btn1X, btnY, btnW3, 22, COLORS.btnSkill)
       .setInteractive({ useHandCursor: true });
     const partyText = this.add
-      .text(x + PAD + smallBtnW / 2, btnY, 'Party', {
-        fontSize: '10px',
+      .text(btn1X, btnY, 'Party', {
+        fontSize: '9px',
         fontStyle: 'bold',
         fontFamily: FONT.sans,
         color: '#ffffff',
@@ -1372,13 +1550,12 @@ export class GameScene extends Phaser.Scene {
       this.handleToggleParty(hero.id);
     });
 
-    const btnX = x + w - PAD - smallBtnW;
     const btnBg = this.add
-      .rectangle(btnX + smallBtnW / 2, btnY, smallBtnW, 24, COLORS.ink)
+      .rectangle(btn2X, btnY, btnW3, 22, COLORS.ink)
       .setInteractive({ useHandCursor: true });
     const btnTxt = this.add
-      .text(btnX + smallBtnW / 2, btnY, 'Upgrade', {
-        fontSize: '10px',
+      .text(btn2X, btnY, '⬆ Gold', {
+        fontSize: '9px',
         fontStyle: 'bold',
         fontFamily: FONT.sans,
         color: '#ffffff',
@@ -1387,6 +1564,22 @@ export class GameScene extends Phaser.Scene {
     btnBg.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
       ptr.event.stopPropagation();
       this.handleUpgrade(hero.id);
+    });
+
+    const gemBg = this.add
+      .rectangle(btn3X, btnY, btnW3, 22, 0x7c3aed)
+      .setInteractive({ useHandCursor: true });
+    const gemText = this.add
+      .text(btn3X, btnY, '💎 Gem', {
+        fontSize: '9px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
+      })
+      .setOrigin(0.5);
+    gemBg.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+      ptr.event.stopPropagation();
+      this.handleGemUpgrade(hero.id);
     });
 
     this.heroesGroup.add([
@@ -1400,13 +1593,18 @@ export class GameScene extends Phaser.Scene {
       partyText,
       btnBg,
       btnTxt,
+      gemBg,
+      gemText,
     ]);
     this.heroCardRefs.push({
       heroId: hero.id,
       levelText,
+      rarityText,
       btnBg,
       partyBg,
       partyText,
+      gemBg,
+      gemText,
     });
   }
 
@@ -1455,9 +1653,10 @@ export class GameScene extends Phaser.Scene {
     );
 
     this.detailHeroIcon = this.add
-      .image(PAD * 2 + 28, sheetY + 28, SNOO_CENTER_SHEET_KEY, 0)
-      .setDisplaySize(64, 64)
+      .image(PAD * 2 + 28, sheetY + 28, this.getHeroSpriteKey(FALLBACK_HERO_ID))
       .setOrigin(0.5);
+    this.setHeroPose(this.detailHeroIcon, FALLBACK_HERO_ID, 'idle');
+    this.detailHeroIcon.setScale(64 / this.getHeroSpriteConfig(FALLBACK_HERO_ID).frameW);
     objs.push(this.detailHeroIcon);
 
     // Hero name / role / rarity
@@ -1675,6 +1874,8 @@ export class GameScene extends Phaser.Scene {
     this.helpGroup.setVisible(v === 'help');
     this.headerGroup.setVisible(!['title', 'help'].includes(v));
     if (v !== 'heroes') this.hideDetail();
+    if (v !== 'raid') this.hideSkillChoice();
+    if (v !== 'title') this.hideNewGameConfirm();
     if (v !== 'raid') this.resultGroup?.setVisible(false);
     if (v === 'map') this.refreshMap();
     if (v === 'party') this.refreshPartySelect();
@@ -1699,7 +1900,7 @@ export class GameScene extends Phaser.Scene {
   private refreshHeader() {
     if (!this.profile) return;
     this.resourceText.setText(
-      `🪙${fmtCompact(this.profile.gold)}  🎫${fmtCompact(this.profile.raidTokens)}  💎${fmtCompact(this.profile.gems)}  ⚡${fmtCompact(this.profile.energy)}`
+      `Gold ${fmtCompact(this.profile.gold)}   Tok ${fmtCompact(this.profile.raidTokens)}\nGem ${fmtCompact(this.profile.gems)}    EN ${fmtCompact(this.profile.energy)}`
     );
     this.raidLvText.setText(
       this.profile.raidLevel > RAID_NODES.length ? 'MAX' : String(this.profile.raidLevel)
@@ -1729,9 +1930,11 @@ export class GameScene extends Phaser.Scene {
         .setText(completed ? 'DONE' : unlocked ? `Lv ${ref.level}` : 'LOCK')
         .setColor(completed ? '#15803d' : unlocked ? '#52525b' : '#94a3b8');
 
-      unlocked
-        ? ref.hit.setInteractive({ useHandCursor: true })
-        : ref.hit.disableInteractive();
+      if (unlocked) {
+        ref.hit.setInteractive({ useHandCursor: true });
+      } else {
+        ref.hit.disableInteractive();
+      }
     });
   }
 
@@ -1767,9 +1970,11 @@ export class GameScene extends Phaser.Scene {
         .setAlpha(isOwned ? 1 : 0.5);
       ref.check.setText(selected ? 'OK' : '');
 
-      isOwned
-        ? ref.bg.setInteractive({ useHandCursor: true })
-        : ref.bg.disableInteractive();
+      if (isOwned) {
+        ref.bg.setInteractive({ useHandCursor: true });
+      } else {
+        ref.bg.disableInteractive();
+      }
     });
 
     const ready = this.selectedParty.length === 5 && this.profile.energy >= ENERGY_COST;
@@ -1781,9 +1986,11 @@ export class GameScene extends Phaser.Scene {
           ? `Need ${ENERGY_COST} energy`
           : `Start Raid · ${ENERGY_COST} energy`
     );
-    ready
-      ? this.partyStartBg.setInteractive({ useHandCursor: true })
-      : this.partyStartBg.disableInteractive();
+    if (ready) {
+      this.partyStartBg.setInteractive({ useHandCursor: true });
+    } else {
+      this.partyStartBg.disableInteractive();
+    }
   }
 
   private refreshRaid() {
@@ -1838,7 +2045,7 @@ export class GameScene extends Phaser.Scene {
       if (!slot) return;
       const dead = hero.hp <= 0;
       const alpha = dead ? 0.4 : 1;
-      this.setHeroPose(slot.icon, hero.spriteFrame, dead ? 'ko' : 'idle');
+      this.setHeroPose(slot.icon, hero.id, dead ? 'ko' : 'idle');
       slot.objects.forEach((object) => object.setVisible(true));
       slot.icon.setAlpha(alpha);
       slot.hpText
@@ -1880,24 +2087,29 @@ export class GameScene extends Phaser.Scene {
     const skillReady = active && canUseSkill(activeHero);
     const ultReady = active && canUseUltimate(activeHero);
 
-    active
-      ? this.attackBtnBg.setInteractive()
-      : this.attackBtnBg.disableInteractive();
+    if (active) {
+      this.attackBtnBg.setInteractive();
+    } else {
+      this.attackBtnBg.disableInteractive();
+    }
     this.attackBtnText.setAlpha(active ? 1 : 0.42);
 
-    skillReady
-      ? this.skillBtnBg.setInteractive({ useHandCursor: true })
-      : this.skillBtnBg.disableInteractive();
+    if (skillReady) {
+      this.skillBtnBg.setInteractive({ useHandCursor: true });
+    } else {
+      this.skillBtnBg.disableInteractive();
+    }
+    const cooldown = activeHero?.skillCooldown ?? 0;
     this.skillBtnText.setText(
-      (activeHero?.skillCooldown ?? 0) > 0
-        ? `CD:${activeHero!.skillCooldown}`
-        : 'Skill'
+      cooldown > 0 ? `CD:${cooldown}` : 'Skill'
     );
     this.skillBtnText.setAlpha(skillReady ? 1 : 0.42);
 
-    ultReady
-      ? this.ultBtnBg.setInteractive({ useHandCursor: true })
-      : this.ultBtnBg.disableInteractive();
+    if (ultReady) {
+      this.ultBtnBg.setInteractive({ useHandCursor: true });
+    } else {
+      this.ultBtnBg.disableInteractive();
+    }
     this.ultBtnText.setText(ultReady ? '⚡ Limit' : 'Limit');
     this.ultBtnText.setAlpha(ultReady ? 1 : 0.42);
   }
@@ -1964,46 +2176,63 @@ export class GameScene extends Phaser.Scene {
     if (!this.profile) return;
     const partySize = this.profile.party.length;
     this.heroCardRefs.forEach(
-      ({ heroId, levelText, btnBg, partyBg, partyText }) => {
+      ({ heroId, levelText, rarityText, btnBg, partyBg, partyText, gemBg, gemText }) => {
         const template = HEROES.find((h) => h.id === heroId);
         const owned = this.profile!.heroes.some((hero) => hero.heroId === heroId);
         const progress = getHeroProgress(this.profile!, heroId);
+        const rarity = template
+          ? getEffectiveHeroRarity(this.profile!, template)
+          : 'Common';
         const ready = owned && canUpgradeHero(this.profile!, heroId);
+        const gemReady = owned && canUpgradeHeroWithGem(this.profile!, heroId);
+        const starLevel = progress.starLevel ?? 0;
         const inParty = this.profile!.party.includes(heroId);
         const canRemove = inParty && partySize > 1;
+
+        const rarityLabel = rarity + (starLevel > 0 ? ` +${starLevel}` : '');
         levelText.setText(
-          owned
-            ? `${template?.role ?? ''} · ${template ? getEffectiveHeroRarity(this.profile!, template) : ''} · Lv ${progress.level}`
-            : 'Locked · Recruit with gems'
+          owned ? `${template?.role ?? ''} · Lv ${progress.level}` : 'Locked'
         );
+        rarityText
+          .setText(rarityLabel)
+          .setColor(
+            '#' +
+              (RARITY_COLOR[rarity] ?? COLORS.rarityCommon)
+                .toString(16)
+                .padStart(6, '0')
+          );
+
         btnBg.setFillStyle(ready ? COLORS.btnPrimary : COLORS.btnDisabled);
-        ready
-          ? btnBg.setInteractive({ useHandCursor: true })
-          : btnBg.disableInteractive();
+        if (ready) {
+          btnBg.setInteractive({ useHandCursor: true });
+        } else {
+          btnBg.disableInteractive();
+        }
+
+        gemBg.setFillStyle(gemReady ? 0x7c3aed : COLORS.btnDisabled);
+        if (gemReady) {
+          gemBg.setInteractive({ useHandCursor: true });
+        } else {
+          gemBg.disableInteractive();
+        }
+        const fullyMaxed = owned && isHeroFullyUpgraded(this.profile!, heroId);
+        gemText.setText(fullyMaxed ? '💎 Max' : `💎 ${HERO_GEM_UPGRADE_COST}`);
 
         partyText.setText(
-          !owned
-            ? 'Locked'
-            : inParty
-            ? canRemove
-              ? 'Remove'
-              : 'In Party'
-            : partySize >= 5
-              ? 'Swap In'
-              : 'Add'
+          inParty
+            ? canRemove ? 'Remove' : 'In Party'
+            : partySize >= 5 ? 'Swap In' : 'Add'
         );
         partyBg.setFillStyle(
-          !owned
-            ? COLORS.btnDisabled
-            : inParty
-            ? canRemove
-              ? COLORS.btnGreen
-              : COLORS.btnDisabled
+          inParty
+            ? canRemove ? COLORS.btnGreen : COLORS.btnDisabled
             : COLORS.btnSkill
         );
-        owned && (!inParty || canRemove)
-          ? partyBg.setInteractive({ useHandCursor: true })
-          : partyBg.disableInteractive();
+        if (!inParty || canRemove) {
+          partyBg.setInteractive({ useHandCursor: true });
+        } else {
+          partyBg.disableInteractive();
+        }
       }
     );
   }
@@ -2021,39 +2250,52 @@ export class GameScene extends Phaser.Scene {
     this.lootItemsGroup.removeAll(true);
     const items = this.profile.inventory.slice(-8).reverse();
     items.forEach((item, i) => {
-      const iy = i * 40;
+      const rowH = 46;
+      const iy = i * rowH;
       const ibg = this.add.graphics();
       ibg.fillStyle(0xf5f5f4);
-      ibg.fillRoundedRect(PAD, iy + PAD, W - PAD * 2, 36, 6);
-      const nameT = this.add.text(PAD * 2.5, iy + PAD + 8, item.name, {
-        fontSize: '12px',
+      ibg.fillRoundedRect(PAD, iy + PAD, W - PAD * 2, rowH - 2, 6);
+      const nameT = this.add.text(PAD * 2.5, iy + PAD + 5, item.name, {
+        fontSize: '11px',
         fontStyle: 'bold',
         fontFamily: FONT.sans,
         color: '#18181b',
       });
+      const bonusLabel = `+${item.bonus} ${item.stat.toUpperCase()}` +
+        (item.bonusLevel ? `  [+${item.bonusLevel}]` : '');
       const bonusT = this.add.text(
         PAD * 2.5,
-        iy + PAD + 22,
-        `+${item.bonus} ${item.stat.toUpperCase()}`,
+        iy + PAD + 20,
+        bonusLabel,
         {
           fontSize: '10px',
           fontFamily: FONT.sans,
           color: '#71717a',
         }
       );
-      const rarT = this.add
-        .text(W - PAD * 2.5, iy + PAD + 18, item.rarity, {
+      const canUpgrade = canUpgradeLootWithToken(this.profile!, item.id);
+      const isMax = (item.bonusLevel ?? 0) >= LOOT_BONUS_LEVEL_MAX;
+      const upgBtnW = 70;
+      const upgBtnX = W - PAD - upgBtnW / 2;
+      const upgBtnY = iy + PAD + rowH / 2 - 4;
+      const upgBg = this.add
+        .rectangle(upgBtnX, upgBtnY, upgBtnW, 22,
+          isMax ? COLORS.btnDisabled : canUpgrade ? 0x0f766e : COLORS.btnDisabled)
+        .setInteractive({ useHandCursor: canUpgrade });
+      const upgText = this.add
+        .text(upgBtnX, upgBtnY,
+          isMax ? 'MAX' : `🪙${LOOT_TOKEN_UPGRADE_COST}`, {
           fontSize: '9px',
           fontStyle: 'bold',
           fontFamily: FONT.sans,
-          color:
-            '#' +
-            (RARITY_COLOR[item.rarity] ?? COLORS.rarityCommon)
-              .toString(16)
-              .padStart(6, '0'),
+          color: '#ffffff',
         })
-        .setOrigin(1, 0.5);
-      this.lootItemsGroup.add([ibg, nameT, bonusT, rarT]);
+        .setOrigin(0.5);
+      if (canUpgrade) {
+        const capturedId = item.id;
+        upgBg.on('pointerdown', () => this.handleLootUpgrade(capturedId));
+      }
+      this.lootItemsGroup.add([ibg, nameT, bonusT, upgBg, upgText]);
     });
 
     if (items.length === 0) {
@@ -2089,7 +2331,8 @@ export class GameScene extends Phaser.Scene {
     const cost = getUpgradeCost(progress.level);
     const ready = canUpgradeHero(this.profile, heroId);
 
-    this.detailHeroIcon.setFrame(hero.spriteFrame);
+    this.setHeroPose(this.detailHeroIcon, hero.id, 'idle');
+    this.detailHeroIcon.setScale(64 / this.getHeroSpriteConfig(hero.id).frameW);
     this.detailHeroName.setText(hero.name);
     this.detailRoleLv.setText(
       `${hero.title} · ${hero.role} · Lv ${progress.level}`
@@ -2107,20 +2350,23 @@ export class GameScene extends Phaser.Scene {
       (v, i) => this.detailStatValues[i]?.setText(String(v))
     );
 
-    const currentSkill = getHeroSkillForLevel(hero, progress.level);
+    const skillChoices = getHeroSkillChoicesForLevel(hero, progress.level);
     const nextSkill = getNextHeroSkillUnlock(hero, progress.level);
     this.detailSkillText.setText(
-      `${currentSkill.name}\n${currentSkill.summary}${
-        nextSkill ? `\nLv ${nextSkill.level}: ${nextSkill.skill.name}` : ''
-      }`
+      [
+        ...skillChoices.map((skill, index) => `${index + 1}. ${skill.name}`),
+        ...(nextSkill ? [`Lv ${nextSkill.level}: ${nextSkill.skill.name}`] : []),
+      ].join('\n')
     );
     this.detailUltText.setText(
       `${hero.ultimate.name}\n${hero.ultimate.summary}`
     );
     this.detailUpgradeBg.setFillStyle(ready ? COLORS.ink : COLORS.btnDisabled);
-    ready
-      ? this.detailUpgradeBg.setInteractive({ useHandCursor: true })
-      : this.detailUpgradeBg.disableInteractive();
+    if (ready) {
+      this.detailUpgradeBg.setInteractive({ useHandCursor: true });
+    } else {
+      this.detailUpgradeBg.disableInteractive();
+    }
     this.detailUpgradeText.setText(
       ready ? `Upgrade · ${cost} gold` : `Need ${cost} gold`
     );
@@ -2133,11 +2379,68 @@ export class GameScene extends Phaser.Scene {
     this.detailGroup.setVisible(false);
   }
 
+  private openSkillChoice() {
+    if (!this.battle || this.battle.status !== 'active') return;
+    const activeHero = getActiveHero(this.battle);
+
+    if (!activeHero || !canUseSkill(activeHero)) return;
+
+    this.skillChoiceHeroText.setText(`${activeHero.name} · Choose Skill`);
+    const skillChoices = activeHero.skillOptions.length > 0
+      ? activeHero.skillOptions
+      : [activeHero.skill];
+
+    this.skillChoiceRefs.forEach((ref, index) => {
+      const skill = skillChoices[index];
+      const available = Boolean(skill);
+      ref.nameText
+        .setText(skill ? skill.name : 'No skill')
+        .setAlpha(available ? 1 : 0.35);
+      ref.summaryText
+        .setText(skill ? skill.summary : '')
+        .setAlpha(available ? 1 : 0.35);
+      ref.metaText
+        .setText(skill ? skill.kind.toUpperCase() : '')
+        .setAlpha(available ? 1 : 0.35);
+      if (available) {
+        ref.hit.setInteractive({ useHandCursor: true });
+      } else {
+        ref.hit.disableInteractive();
+      }
+    });
+
+    this.skillChoiceGroup.setVisible(true);
+  }
+
+  private hideSkillChoice() {
+    this.skillChoiceGroup.setVisible(false);
+  }
+
+  private chooseSkill(index: number) {
+    if (!this.battle || this.battle.status !== 'active') return;
+    const activeHero = getActiveHero(this.battle);
+    const skill = activeHero?.skillOptions[index] ?? activeHero?.skill;
+
+    if (!skill) return;
+
+    this.hideSkillChoice();
+    this.handleAction('skill', skill, index);
+  }
+
+  private showNewGameConfirm() {
+    this.newGameConfirmGroup.setVisible(true);
+  }
+
+  private hideNewGameConfirm() {
+    this.newGameConfirmGroup.setVisible(false);
+  }
+
   // ══════════════════════════════════════════════════════════════════════
   // Action handlers
   // ══════════════════════════════════════════════════════════════════════
 
-  private handleNewGame() {
+  private confirmNewGame() {
+    this.hideNewGameConfirm();
     this.profile = createInitialPlayerSave(this.username);
     this.selectedParty = this.profile.party.slice(0, 5);
     this.battle = null;
@@ -2200,7 +2503,11 @@ export class GameScene extends Phaser.Scene {
     this.refreshPartySelect();
   }
 
-  private handleAction(action: BattleAction) {
+  private handleAction(
+    action: BattleAction,
+    selectedSkill?: HeroSkill,
+    skillChoiceIndex = 0
+  ) {
     if (!this.profile || !this.battle || this.battle.status !== 'active')
       return;
     const activeHero = getActiveHero(this.battle);
@@ -2213,16 +2520,20 @@ export class GameScene extends Phaser.Scene {
     );
     const prevHeroes = this.battle.heroes;
     const prevHeroHps = prevHeroes.map((h) => h.hp);
-    const nextBattle = resolveHeroAction(this.battle, action);
+    const nextBattle = resolveHeroAction(this.battle, action, selectedSkill);
     const bossDamage = Math.max(
       0,
       Math.round(this.battle.boss.hp - nextBattle.boss.hp)
     );
-    const damagedHeroSlots: Array<{ index: number; row: number; ko: boolean }> = [];
+    const damagedHeroSlots: Array<{ index: number; heroId: string; ko: boolean }> = [];
 
     // Show hero attack effect on boss
     if (activeHero) {
-      const frame = this.getHeroEffectFrame(activeHero.role, activeHero.level, action);
+      const frame = this.getHeroEffectFrame(
+        activeHero,
+        action,
+        skillChoiceIndex
+      );
       this.spawnEffectSprite(frame, this.bossCX, this.bossCY);
       if (bossDamage > 0) {
         this.spawnBossFloat(bossDamage, action === 'ultimate' ? 'ultimate' : 'damage');
@@ -2263,7 +2574,7 @@ export class GameScene extends Phaser.Scene {
         if (slot) {
           damagedHeroSlots.push({
             index: i,
-            row: nextHero.spriteFrame,
+            heroId: nextHero.id,
             ko: nextHero.hp <= 0,
           });
           const bossSpecial = nextBattle.boss.specialSkill;
@@ -2275,7 +2586,7 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
-    // Show boss debuff effect if boss applied a status effect this turn
+    // Show boss debuff effect + center-screen skill banner if boss used special this turn
     const newLog = nextBattle.logs[0];
     const prevLog = this.battle.logs[0];
     if (
@@ -2288,9 +2599,9 @@ export class GameScene extends Phaser.Scene {
         (hp, i) => hp === (nextBattle.heroes[i]?.hp ?? hp)
       )
     ) {
+      const skill = nextBattle.boss.specialSkill;
       const frame =
-        GameScene.BOSS_DEBUFF_FRAME[nextBattle.boss.specialSkill.effectType] ??
-        9;
+        GameScene.BOSS_DEBUFF_FRAME[skill.effectType] ?? 9;
       this.heroSlots.forEach((slot, i) => {
         if ((nextBattle.heroes[i]?.hp ?? 0) > 0) {
           this.time.delayedCall(i * 100, () =>
@@ -2298,6 +2609,7 @@ export class GameScene extends Phaser.Scene {
           );
         }
       });
+      this.showBossSkillBanner(nextBattle.boss.name, skill.icon, skill.name);
     }
 
     if (action === 'ultimate' && activeHero) {
@@ -2316,10 +2628,10 @@ export class GameScene extends Phaser.Scene {
     if (nextBattle.status === 'active') {
       this.refreshRaid();
       if (activeHero) {
-        this.animateActiveHeroAction(activeIndex, activeHero.spriteFrame, action);
+        this.animateActiveHeroAction(activeIndex, activeHero.id, action);
       }
-      damagedHeroSlots.forEach(({ index, row, ko }) =>
-        this.animateHeroHit(index, row, ko)
+      damagedHeroSlots.forEach(({ index, heroId, ko }) =>
+        this.animateHeroHit(index, heroId, ko)
       );
       return;
     }
@@ -2346,13 +2658,13 @@ export class GameScene extends Phaser.Scene {
         encounterIndex: nextIndex,
         encounterCount: run.battleCount,
       });
-      this.showNotification(`Encounter ${nextIndex}/${run.battleCount}`);
+      this.showEncounterBanner(nextIndex, run.battleCount);
       this.refreshAll();
       if (activeHero) {
-        this.animateActiveHeroAction(activeIndex, activeHero.spriteFrame, action);
+        this.animateActiveHeroAction(activeIndex, activeHero.id, action);
       }
-      damagedHeroSlots.forEach(({ index, row, ko }) =>
-        this.animateHeroHit(index, row, ko)
+      damagedHeroSlots.forEach(({ index, heroId, ko }) =>
+        this.animateHeroHit(index, heroId, ko)
       );
       return;
     }
@@ -2415,11 +2727,60 @@ export class GameScene extends Phaser.Scene {
     void persistKeeperSave(nextProfile);
     this.refreshAll();
     if (activeHero) {
-      this.animateActiveHeroAction(activeIndex, activeHero.spriteFrame, action);
+      this.animateActiveHeroAction(activeIndex, activeHero.id, action);
     }
-    damagedHeroSlots.forEach(({ index, row, ko }) =>
-      this.animateHeroHit(index, row, ko)
+    damagedHeroSlots.forEach(({ index, heroId, ko }) =>
+      this.animateHeroHit(index, heroId, ko)
     );
+
+    if (victory) {
+      this.animateBossDefeat();
+    }
+  }
+
+  private showBossSkillBanner(bossName: string, icon: string, skillName: string) {
+    const bannerH = 56;
+    const bg = this.add
+      .rectangle(W / 2, STAGE_Y + 80, W, bannerH, 0x7f1d1d, 0.88)
+      .setDepth(42)
+      .setAlpha(0);
+    const text = this.add
+      .text(W / 2, STAGE_Y + 80, `${icon}  ${bossName}: ${skillName}`, {
+        fontSize: '14px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#fca5a5',
+      })
+      .setOrigin(0.5)
+      .setDepth(43)
+      .setAlpha(0);
+    this.tweens.add({
+      targets: [bg, text],
+      alpha: 1,
+      duration: 180,
+      onComplete: () => {
+        this.time.delayedCall(1600, () => {
+          this.tweens.add({
+            targets: [bg, text],
+            alpha: 0,
+            duration: 350,
+            onComplete: () => { bg.destroy(); text.destroy(); },
+          });
+        });
+      },
+    });
+  }
+
+  private animateBossDefeat() {
+    // Boss slowly drifts upward and fades out — FF-style defeat
+    this.tweens.add({
+      targets: [this.bossImage, this.bossAura],
+      alpha: 0,
+      y: `+=${60}`,
+      duration: 1800,
+      ease: 'Sine.In',
+      delay: 300,
+    });
   }
 
   private showNotification(message: string) {
@@ -2442,6 +2803,44 @@ export class GameScene extends Phaser.Scene {
       onComplete: () => {
         this.time.delayedCall(2200, () => {
           this.tweens.add({ targets: notif, alpha: 0, duration: 380, onComplete: () => notif.destroy() });
+        });
+      },
+    });
+  }
+
+  private showEncounterBanner(index: number, total: number) {
+    // Phase 1: black curtain slides in from left, covering the full screen
+    const curtain = this.add
+      .rectangle(0, H / 2, 0, H, 0x000000)
+      .setDepth(44)
+      .setOrigin(0, 0.5);
+
+    this.tweens.add({
+      targets: curtain,
+      width: W,
+      duration: 260,
+      ease: 'Sine.In',
+      onComplete: () => {
+        // Phase 2: show battle counter on top of the black screen
+        const text = this.add
+          .text(W / 2, H / 2, `Battle  ${index} / ${total}`, {
+            fontSize: '24px',
+            fontStyle: 'bold',
+            fontFamily: FONT.sans,
+            color: '#ffffff',
+          })
+          .setOrigin(0.5)
+          .setDepth(45);
+
+        this.time.delayedCall(700, () => {
+          // Phase 3: curtain slides out to the right, revealing new scene
+          this.tweens.add({
+            targets: curtain,
+            x: W,
+            duration: 300,
+            ease: 'Sine.Out',
+            onComplete: () => { curtain.destroy(); text.destroy(); },
+          });
         });
       },
     });
@@ -2497,16 +2896,6 @@ export class GameScene extends Phaser.Scene {
     this.refreshAll();
   }
 
-  private handleRecruitHero() {
-    if (!this.profile) return;
-
-    const result = rollHero(this.profile);
-    this.profile = result.save;
-    void persistKeeperSave(result.save);
-    this.showNotification(result.message);
-    this.refreshAll();
-  }
-
   private handleToggleParty(heroId: string) {
     if (!this.profile) return;
     if (!this.profile.heroes.some((hero) => hero.heroId === heroId)) return;
@@ -2516,7 +2905,7 @@ export class GameScene extends Phaser.Scene {
         ? this.profile.party
         : HEROES.slice(0, 5).map((hero) => hero.id);
     const inParty = currentParty.includes(heroId);
-    let nextParty = currentParty;
+    let nextParty: string[];
 
     if (inParty) {
       if (currentParty.length <= 1) return;
@@ -2547,9 +2936,45 @@ export class GameScene extends Phaser.Scene {
     if (!result.upgraded) return;
     this.profile = result.save;
     void persistKeeperSave(result.save);
+    // Always reset stale battle/result state so the Raid Clear overlay
+    // doesn't re-appear when upgrading from the heroes tab.
     if (!this.battle || this.battle.status !== 'active') {
       this.battle = createBattleState(result.save);
+      this.lastRewards = null;
     }
+    const heroName = HEROES.find((h) => h.id === heroId)?.name ?? heroId;
+    const progress = result.save.heroes.find((h) => h.heroId === heroId);
+    this.showNotification(`${heroName} → Lv ${progress?.level ?? '?'} upgraded!`);
+    this.refreshAll();
+  }
+
+  private handleGemUpgrade(heroId: string) {
+    if (!this.profile) return;
+    const result = upgradeHeroWithGem(this.profile, heroId);
+    if (!result.upgraded) {
+      this.showNotification(result.message);
+      return;
+    }
+    this.profile = result.save;
+    void persistKeeperSave(result.save);
+    if (!this.battle || this.battle.status !== 'active') {
+      this.battle = createBattleState(result.save);
+      this.lastRewards = null;
+    }
+    this.showNotification(result.message);
+    this.refreshAll();
+  }
+
+  private handleLootUpgrade(itemId: string) {
+    if (!this.profile) return;
+    const result = upgradeLootWithToken(this.profile, itemId);
+    if (!result.upgraded) {
+      this.showNotification(result.message);
+      return;
+    }
+    this.profile = result.save;
+    void persistKeeperSave(result.save);
+    this.showNotification(result.message);
     this.refreshAll();
   }
 
@@ -2557,51 +2982,73 @@ export class GameScene extends Phaser.Scene {
   // Combat effects
   // ══════════════════════════════════════════════════════════════════════
 
-  // Damage_effect.png is 6 cols × 4 rows (256×256 each):
-  //   Row 0  FIRE      frames  0– 5  (weakest→strongest)
-  //   Row 1  THUNDER   frames  6–11
-  //   Row 2  BLIZZARD  frames 12–17
-  //   Row 3  SLASH     frames 18–23  (col 5 = "999" special)
-  private static readonly ROLE_ELEMENT_BASE: Record<string, number> = {
-    Tank: 18, Warrior: 18,  // SLASH
-    Mage: 0,                // FIRE
-    Ranger: 12,             // BLIZZARD (ice arrows)
-    Healer: 6, Support: 6,  // THUNDER
+  // damage_effect.png is stored as 6 columns x 4 rows, but column 5 is retired.
+  // Use col 0 for attacks, cols 1-3 for skills, and col 4 for limit breaks.
+  private static readonly EFFECT_ROW_STRIDE = 6;
+  private static readonly SLASH_EFFECT_BASE = 18;
+  private static readonly HERO_MAGIC_EFFECT_BASE: Record<string, number> = {
+    'snoo-vanguard': 0,
+    'flair-archmage': 6,
+    'automod-oracle': 12,
   };
 
   private static readonly BOSS_DEBUFF_FRAME: Record<string, number> = {
-    berserk: 5,  // FIRE   col 5 — intense explosion
-    daze: 9,     // THUNDER col 3 — big lightning
-    silence: 17, // BLIZZARD col 5 — heavy ice
-    confuse: 13, // BLIZZARD col 1 — swirling blizzard
-    blind: 6,    // THUNDER col 0 — flash
+    berserk: 4,
+    daze: 9,
+    silence: 16,
+    confuse: 13,
+    blind: 6,
   };
+
+  private getHeroSpriteConfig(heroId: string): HeroSpriteConfig {
+    const config = HERO_SPRITE_CONFIG[heroId];
+
+    if (config) return config;
+
+    const fallback = HERO_SPRITE_CONFIG[FALLBACK_HERO_ID];
+
+    if (!fallback) {
+      throw new Error(`Missing fallback hero sprite: ${FALLBACK_HERO_ID}`);
+    }
+
+    return fallback;
+  }
+
+  private getHeroSpriteKey(heroId: string) {
+    return this.getHeroSpriteConfig(heroId).key;
+  }
+
+  private getHeroPoseColumn(heroId: string, pose: HeroPose) {
+    const config = this.getHeroSpriteConfig(heroId);
+    const poseMap =
+      config.frameCount >= 6 ? DEVOPS_HERO_POSE_COL : COMMON_HERO_POSE_COL;
+
+    return Math.min(poseMap[pose], config.frameCount - 1);
+  }
 
   private setHeroPose(
     image: Phaser.GameObjects.Image,
-    row: number,
+    heroId: string,
     pose: HeroPose
   ) {
-    const col = HERO_POSE_LABEL_COLS + HERO_POSE_COL[pose];
-    image
-      .setTexture(SNOO_FRAME_SHEET_KEY)
-      .setCrop(
-        col * HERO_POSE_FRAME_W,
-        row * HERO_POSE_FRAME_H,
-        HERO_POSE_FRAME_W,
-        HERO_POSE_FRAME_H
-      );
+    const config = this.getHeroSpriteConfig(heroId);
+    const col = this.getHeroPoseColumn(heroId, pose);
+    image.setTexture(config.key, col);
+    // Crop to a square from the top of the frame (head + upper body).
+    // Hero frames are 256×1024 (1:4 ratio); without this crop they render
+    // severely squished when displayed in a square slot.
+    image.setCrop(0, 0, config.frameW, config.frameW);
   }
 
   private animateActiveHeroAction(
     slotIndex: number,
-    row: number,
+    heroId: string,
     action: BattleAction
   ) {
     const slot = this.heroSlots[slotIndex];
     if (!slot) return;
 
-    this.setHeroPose(slot.icon, row, action === 'attack' ? 'attack' : 'cast');
+    this.setHeroPose(slot.icon, heroId, action === 'attack' ? 'attack' : 'cast');
     slot.icon.setX(slot.iconCX);
     this.tweens.add({
       targets: slot.icon,
@@ -2611,16 +3058,17 @@ export class GameScene extends Phaser.Scene {
       yoyo: true,
       onComplete: () => {
         slot.icon.setX(slot.iconCX);
-        this.setHeroPose(slot.icon, row, 'idle');
+        this.setHeroPose(slot.icon, heroId, 'idle');
       },
     });
   }
 
-  private animateHeroHit(slotIndex: number, row: number, ko: boolean) {
+  private animateHeroHit(slotIndex: number, heroId: string, ko: boolean) {
     const slot = this.heroSlots[slotIndex];
     if (!slot) return;
 
-    this.setHeroPose(slot.icon, row, ko ? 'ko' : 'hit');
+    this.setHeroPose(slot.icon, heroId, ko ? 'ko' : 'hit');
+    if (!ko) slot.icon.setTint(0xffd1d1);
     this.tweens.add({
       targets: slot.icon,
       x: { from: slot.iconCX - 4, to: slot.iconCX + 4 },
@@ -2629,16 +3077,31 @@ export class GameScene extends Phaser.Scene {
       repeat: 2,
       onComplete: () => {
         slot.icon.setX(slot.iconCX);
-        this.setHeroPose(slot.icon, row, ko ? 'ko' : 'idle');
+        slot.icon.clearTint();
+        this.setHeroPose(slot.icon, heroId, ko ? 'ko' : 'idle');
       },
     });
   }
 
-  private getHeroEffectFrame(role: string, level: number, action: BattleAction): number {
-    const base = GameScene.ROLE_ELEMENT_BASE[role] ?? 18;
-    const col = action === 'ultimate' ? 5
-              : action === 'attack'   ? 0
-              : Math.min(4, Math.floor((level - 1) / 4));
+  private getHeroEffectFrame(
+    hero: BattleHero,
+    action: BattleAction,
+    skillChoiceIndex: number
+  ): number {
+    const base =
+      hero.atk >= hero.mag
+        ? GameScene.SLASH_EFFECT_BASE
+        : GameScene.HERO_MAGIC_EFFECT_BASE[hero.id] ??
+          GameScene.SLASH_EFFECT_BASE;
+    const col =
+      action === 'ultimate'
+        ? 4
+        : action === 'attack'
+          ? 0
+          : 1 + (skillChoiceIndex % 3);
+
+    if (col >= GameScene.EFFECT_ROW_STRIDE - 1) return base + 4;
+
     return base + col;
   }
 
@@ -2666,13 +3129,13 @@ export class GameScene extends Phaser.Scene {
   private spawnBossFloat(value: number, kind: 'damage' | 'ultimate') {
     const color = kind === 'ultimate' ? '#fbbf24' : '#ef4444';
     const floatText = this.add
-      .text(this.bossCX, this.bossCY - 58, `-${value}`, {
-        fontSize: kind === 'ultimate' ? '18px' : '14px',
+      .text(this.bossCX, this.bossCY - 58, String(value), {
+        fontSize: kind === 'ultimate' ? '28px' : '24px',
         fontStyle: 'bold',
         fontFamily: FONT.sans,
         color,
         stroke: '#000000',
-        strokeThickness: 3,
+        strokeThickness: 4,
       })
       .setOrigin(0.5, 1)
       .setDepth(17);
@@ -2696,18 +3159,18 @@ export class GameScene extends Phaser.Scene {
     if (!slot) return;
 
     const label =
-      kind === 'damage' ? `-${value}` : kind === 'heal' ? `+${value}` : '⚡';
+      kind === 'ultimate' ? 'LIMIT' : String(value);
     const color =
       kind === 'damage' ? '#ef4444' : kind === 'heal' ? '#60a5fa' : '#fbbf24';
 
     const floatText = this.add
       .text(slot.iconCX, slot.iconCY - HERO_SPRITE_SIZE / 2, label, {
-        fontSize: kind === 'ultimate' ? '18px' : '13px',
+        fontSize: kind === 'ultimate' ? '18px' : '20px',
         fontStyle: 'bold',
-        fontFamily: kind === 'ultimate' ? FONT.emoji : FONT.sans,
+        fontFamily: FONT.sans,
         color,
         stroke: '#000000',
-        strokeThickness: 2,
+        strokeThickness: 3,
       })
       .setOrigin(0.5, 1)
       .setDepth(15);

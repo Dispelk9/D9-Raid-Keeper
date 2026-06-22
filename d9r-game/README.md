@@ -4,7 +4,7 @@ Full technical reference for the `d9r-game` Devvit app.
 
 ---
 
-## Changelog (since last commits)
+## Changelog
 
 ### Session 2 — Phaser 3 rewrite + pixel art sprites (`d295aef`)
 - Replaced the original React/HTML game client with a full **Phaser 3** game (430×760, Scale.FIT).

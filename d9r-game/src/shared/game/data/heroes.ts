@@ -15,6 +15,7 @@ export const HEROES: HeroTemplate[] = [
   dataEngineer,
 ];
 
+// All 6 heroes are unlocked from the start — no roll/recruit mechanic.
 export const STARTER_PARTY = [
   frontendDeveloper.id,
   backendDeveloper.id,
@@ -50,6 +51,18 @@ export const getHeroSkillForLevel = (
     .filter((unlock) => level >= unlock.level)
     .sort((first, second) => second.level - first.level)[0]?.skill ??
   hero.skill;
+
+export const getHeroSkillChoicesForLevel = (
+  hero: HeroTemplate,
+  level: number
+): HeroSkill[] => {
+  const primary = getHeroSkillForLevel(hero, level);
+
+  return [primary, hero.secondarySkill].filter(
+    (skill, index, skills) =>
+      skills.findIndex((candidate) => candidate.id === skill.id) === index
+  );
+};
 
 export const getNextHeroSkillUnlock = (hero: HeroTemplate, level: number) =>
   getHeroSkillUnlocks(hero)

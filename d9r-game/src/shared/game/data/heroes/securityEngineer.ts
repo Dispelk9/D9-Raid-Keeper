@@ -16,6 +16,18 @@ export const securityEngineer: HeroTemplate = {
     power: 1.16,
     kind: 'strike',
   },
+  secondarySkill: {
+    id: 'patch-guard',
+    name: 'Patch Guard',
+    summary: 'Guard strike, raises party evasion',
+    power: 1.02,
+    kind: 'strike',
+    effect: {
+      target: 'party',
+      evasionModifier: 0.1,
+      duration: 2,
+    },
+  },
   skillUnlocks: [
     {
       level: 9,

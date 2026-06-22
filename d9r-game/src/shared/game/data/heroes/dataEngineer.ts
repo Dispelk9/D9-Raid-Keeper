@@ -16,6 +16,18 @@ export const dataEngineer: HeroTemplate = {
     power: 1.44,
     kind: 'heal',
   },
+  secondarySkill: {
+    id: 'health-check',
+    name: 'Health Check',
+    summary: 'Heal, raises self evasion',
+    power: 1.18,
+    kind: 'heal',
+    effect: {
+      target: 'self',
+      evasionModifier: 0.12,
+      duration: 2,
+    },
+  },
   skillUnlocks: [
     {
       level: 10,
