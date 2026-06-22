@@ -1,4 +1,4 @@
-name: Deploy to Devvit
+name: CI
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
     paths:
       - 'd9r-game/**'
       - '.github/workflows/deploy.yml'
-  workflow_dispatch:       # allow manual runs from the GitHub Actions tab
+  workflow_dispatch:
 
 jobs:
   test:
@@ -35,45 +35,3 @@ jobs:
 
       - name: Lint
         run: npm run lint
-
-  deploy:
-    name: Upload to Devvit
-    runs-on: ubuntu-latest
-    needs: test
-
-    defaults:
-      run:
-        working-directory: d9r-game
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: d9r-game/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      # Secrets to create in GitHub → Settings → Secrets and variables → Actions:
-      #   DEVVIT_TOKEN      ← exact content of  cat ~/.devvit/token
-      #   DEVVIT_SESSION_ID ← exact content of  cat ~/.devvit/session-id
-      - name: Restore Devvit credentials
-        run: |
-          mkdir -p ~/.devvit
-          printf '%s' "${{ secrets.DEVVIT_TOKEN }}" > ~/.devvit/token
-          printf '%s' "${{ secrets.DEVVIT_SESSION_ID }}" > ~/.devvit/session-id
-
-      - name: Verify Devvit auth
-        run: npx devvit whoami
-        # If this fails, the DEVVIT_TOKEN / DEVVIT_SESSION_ID secrets are
-        # missing, expired, or contain the wrong content. Re-run
-        # `npx devvit login` locally, then copy the new file contents:
-        #   cat ~/.devvit/token      → update DEVVIT_TOKEN secret
-        #   cat ~/.devvit/session_id → update DEVVIT_SESSION_ID secret
-
-      - name: Upload to Devvit
-        run: npx devvit upload --bump patch
