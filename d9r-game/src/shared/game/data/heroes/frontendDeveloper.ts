@@ -4,7 +4,7 @@ export const frontendDeveloper: HeroTemplate = {
   id: 'snoo-vanguard',
   name: 'Frontend Developer',
   title: 'Pixel Paladin',
-  role: 'Mage',
+  role: 'Frontend',
   rarity: 'Rare',
   icon: '</>',
   spriteFrame: 0,

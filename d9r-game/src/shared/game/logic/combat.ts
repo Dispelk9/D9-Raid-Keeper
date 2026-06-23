@@ -8,6 +8,8 @@ import {
   getBossAppearance,
   getBossTemplate,
   getRaidNode,
+  MINI_BOSS_SECRETARY_KEY,
+  MINI_BOSS_SECURITY_KEY,
 } from '../data/raidBosses';
 import {
   getHeroProgress,
@@ -265,15 +267,23 @@ const createRaidBoss = (
   const encounterLabel =
     encounterCount > 1 ? ` · ${encounterIndex}/${encounterCount}` : '';
 
+  // Non-final encounters use a mini-boss sprite instead of the floor boss Snoo
+  const isMiniBoss = encounterIndex < encounterCount;
+  const miniBossKey = raidLevel <= 3 ? MINI_BOSS_SECRETARY_KEY : MINI_BOSS_SECURITY_KEY;
+  const miniBossName = raidLevel <= 3 ? 'Secretary' : 'Security';
+  const miniBossTitle = raidLevel <= 3 ? 'Office Gatekeeper' : 'Security Chief';
+
   return {
     id: `${bossTemplate.id}-lv${raidLevel}-${encounterIndex}`,
-    name: appearance.name,
-    title: `${appearance.title} · Lv ${raidLevel}${encounterLabel}`,
+    name: isMiniBoss ? miniBossName : appearance.name,
+    title: `${isMiniBoss ? miniBossTitle : appearance.title} · Lv ${raidLevel}${encounterLabel}`,
     icon: appearance.icon,
-    spriteKey: appearance.spriteKey,
-    ...(typeof appearance.spriteFrame === 'number'
-      ? { spriteFrame: appearance.spriteFrame }
-      : {}),
+    spriteKey: isMiniBoss ? miniBossKey : appearance.spriteKey,
+    ...(isMiniBoss
+      ? { spriteFrame: 0 }
+      : typeof appearance.spriteFrame === 'number'
+        ? { spriteFrame: appearance.spriteFrame }
+        : {}),
     maxHp,
     hp: maxHp,
     atk: Math.round(bossTemplate.stats.atk * levelMultiplier),
@@ -475,8 +485,8 @@ const resolveHeroStrike = (
 ) => {
   const isSpell = skill.kind === 'spell';
   const supportBoost = skill.kind === 'rally' ? actor.res * 0.32 : 0;
-  const speedBoost = actor.role === 'Ranger' ? actor.spd * 0.34 : 0;
-  const guardBoost = actor.role === 'Tank' ? actor.def * 0.42 : 0;
+  const speedBoost = actor.role === 'QA' ? actor.spd * 0.34 : 0;
+  const guardBoost = actor.role === 'Security' ? actor.def * 0.42 : 0;
   const berserkMult = actor.statusEffects
     .filter((e) => e.effectType === 'berserk')
     .reduce((m, e) => m * (e.atkModifier ?? 1), 1);
@@ -484,7 +494,10 @@ const resolveHeroStrike = (
     (isSpell
       ? actor.mag + supportBoost
       : actor.atk + speedBoost + guardBoost + supportBoost) * berserkMult;
-  const defenseStat = isSpell ? state.boss.res : state.boss.def;
+  const bossDefMult = state.boss.statusEffects
+    .filter((e) => e.effectType === 'fortify')
+    .reduce((m, e) => m * (e.defModifier ?? 1), 1);
+  const defenseStat = (isSpell ? state.boss.res : state.boss.def) * bossDefMult;
   const missed = Math.random() < getMissChance(actor, state.boss, skill);
   const critical = !missed && Math.random() < getCritChance(actor, skill);
   const baseDamage = missed
@@ -547,7 +560,7 @@ const BOSS_SPECIAL_SKILL: HeroSkill = {
 };
 
 const chooseBossTarget = (heroes: BattleHero[]) => {
-  const tank = heroes.find((hero) => hero.role === 'Tank' && hero.hp > 0);
+  const tank = heroes.find((hero) => hero.role === 'Security' && hero.hp > 0);
 
   if (tank) return tank;
 
@@ -566,10 +579,40 @@ const chooseBossSpecialSkill = (state: BattleState): BossSpecialSkill | null => 
   return skills[(state.round + state.encounterIndex) % skills.length] ?? skills[0]!;
 };
 
+const BOSS_SELF_BUFF_EFFECTS: Record<string, Partial<BattleStatusEffect>> = {
+  rage:      { atkModifier: 1.4 },
+  fortify:   { defModifier: 1.35 },
+  precision: { accuracyModifier: 0.35 },
+  evade:     { evasionModifier: 0.30 },
+};
+
 const resolveEliteBossSkill = (
   state: BattleState,
   skill: BossSpecialSkill
 ): BattleState => {
+  // Boss self-buff — no hero damage, buff applied to boss statusEffects
+  if (skill.target === 'self') {
+    const selfEffect: BattleStatusEffect = {
+      id: `boss-${skill.effectType}`,
+      name: skill.name,
+      effectType: skill.effectType,
+      duration: skill.duration,
+      ...(BOSS_SELF_BUFF_EFFECTS[skill.effectType] ?? {}),
+    };
+    return {
+      ...state,
+      boss: {
+        ...state.boss,
+        countdown: 4,
+        statusEffects: addStatusEffect(state.boss.statusEffects, selfEffect),
+      },
+      logs: addLog(state.logs, `${state.boss.name} used ${skill.name}!`, 'boss', {
+        attackName: skill.name,
+        effectType: skill.effectType,
+      }),
+    };
+  }
+
   const living = state.heroes.filter((h) => h.hp > 0);
   if (living.length === 0) return { ...state, status: 'lost' };
 
@@ -587,14 +630,23 @@ const resolveEliteBossSkill = (
     ...(skill.effectType === 'berserk' ? { atkModifier: 1.5 } : {}),
   };
 
+  // Base damage: ~60% of boss ATK, reduced by each hero's DEF
+  const baseDmg = Math.max(8, Math.round(state.boss.atk * 0.6));
+  const targetHeroIds: string[] = [];
+
   const heroes = state.heroes.map((hero) => {
     if (!targets.some((t) => t?.id === hero.id)) return hero;
-    return { ...hero, statusEffects: addStatusEffect(hero.statusEffects, statusEffect) };
+    const damage = Math.max(4, Math.round(baseDmg - hero.def * 0.2));
+    targetHeroIds.push(hero.id);
+    return {
+      ...hero,
+      hp: Math.max(0, hero.hp - damage),
+      statusEffects: addStatusEffect(hero.statusEffects, statusEffect),
+    };
   });
 
   const targetLabel =
     skill.target === 'party' ? 'the whole party' : (targets[0]?.name ?? 'a hero');
-  const targetHeroIds = targets.flatMap((target) => target?.id ?? []);
   const logMsg = `${state.boss.name} used ${skill.name} on ${targetLabel}!`;
   const status = heroes.every((h) => h.hp <= 0) ? 'lost' : 'active';
 
@@ -663,9 +715,12 @@ const resolveSingleBossAttack = (state: BattleState): BattleState => {
     return { ...state, status: 'lost', logs: addLog(state.logs, 'The party fell.', 'boss') };
   }
 
+  const bossAtkMult = state.boss.statusEffects
+    .filter((e) => e.effectType === 'rage')
+    .reduce((m, e) => m * (e.atkModifier ?? 1), 1);
   const missed = Math.random() < getMissChance(state.boss, target, BOSS_ATTACK_SKILL);
   const critical = !missed && Math.random() < getCritChance(state.boss, BOSS_ATTACK_SKILL);
-  const baseDamage = missed ? 0 : getDamage(state.boss.atk, target.def, BOSS_ATTACK_SKILL.power, 8);
+  const baseDamage = missed ? 0 : getDamage(state.boss.atk * bossAtkMult, target.def, BOSS_ATTACK_SKILL.power, 8);
   const damage = critical ? Math.round(baseDamage * 1.45) : baseDamage;
   const heroes = state.heroes.map((hero) =>
     hero.id === target.id && !missed ? { ...hero, hp: Math.max(0, hero.hp - damage) } : hero
@@ -688,11 +743,11 @@ const resolveSingleBossAttack = (state: BattleState): BattleState => {
   };
 };
 
-// Boss phase: 1–3 attacks (weighted), then tick effects once per round
+// Boss phase: 3–5 attacks (weighted), then tick effects once per round
 const resolveBossTurnPhase = (state: BattleState): BattleState => {
   if (state.status !== 'active') return state;
   const roll = Math.random();
-  const numAttacks = roll < 0.50 ? 1 : roll < 0.82 ? 2 : 3;
+  const numAttacks = roll < 0.40 ? 3 : roll < 0.80 ? 4 : 5;
   let current = state;
   for (let i = 0; i < numAttacks && current.status === 'active'; i++) {
     current = resolveSingleBossAttack(current);

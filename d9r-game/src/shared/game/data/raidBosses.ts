@@ -7,6 +7,8 @@ import { projectManager } from './bosses/projectManager';
 import { techLead } from './bosses/techLead';
 
 export const SNOO_BOSS_RIGHT_KEY = 'snoo-bosses-right';
+export const MINI_BOSS_SECRETARY_KEY = 'mini-boss-secretary';
+export const MINI_BOSS_SECURITY_KEY  = 'mini-boss-security';
 
 export const RAID_BOSSES: RaidBossTemplate[] = [
   productOwner,

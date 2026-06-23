@@ -4,7 +4,7 @@ export const backendDeveloper: HeroTemplate = {
   id: 'karma-duelist',
   name: 'Backend Developer',
   title: 'API Knight',
-  role: 'Warrior',
+  role: 'Backend',
   rarity: 'Rare',
   icon: 'API',
   spriteFrame: 1,

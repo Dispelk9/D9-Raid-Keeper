@@ -32,5 +32,12 @@ export const techLead: RaidBossTemplate = {
       target: 'single',
       duration: 2,
     },
+    {
+      name: 'Architecture Barrier',
+      icon: 'TL',
+      effectType: 'fortify',
+      target: 'self',
+      duration: 3,
+    },
   ],
 };

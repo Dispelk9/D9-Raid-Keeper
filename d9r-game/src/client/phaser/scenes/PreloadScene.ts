@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { BOSS_SPRITE_MAP, SNOO_BOSS_RIGHT_KEY } from '../../../shared/game/data/raidBosses';
 import { COLORS, FONT, H, W } from '../constants';
 import { generateAllHeroSprites } from '../heroSpriteGen';
+import { generateMiniBossSprites } from '../miniBossSpriteGen';
 import {
   EFFECT_ASSETS,
   HUD_KEY,
@@ -52,7 +53,13 @@ export class PreloadScene extends Phaser.Scene {
       label.setText('Ready!');
     });
 
-    // ── Battle background & HUD ────────────────────────────────────────────
+    // ── Battle backgrounds (offices spritesheet: 3 col × 2 row, 512×512 each)
+    this.load.spritesheet('offices', 'assets/backgrounds/offices/offices.png', {
+      frameWidth: 512,
+      frameHeight: 512,
+    });
+
+    // ── Battle background & HUD (fallback hill scene) ─────────────────────
     this.load.image(
       'battle-bg',
       'assets/backgrounds/Battle-background-hazy-hills-files/PNG/battle-background-sunny-hillsx4.png'
@@ -80,8 +87,9 @@ export class PreloadScene extends Phaser.Scene {
   }
 
   create() {
-    // Generate all hero sprites procedurally (no image files needed)
+    // Generate all hero + mini-boss sprites procedurally (no image files needed)
     generateAllHeroSprites(this);
+    generateMiniBossSprites(this);
 
     const nearest = Phaser.Textures.FilterMode.NEAREST;
     Object.keys(BOSS_SPRITE_MAP).forEach((key) => {

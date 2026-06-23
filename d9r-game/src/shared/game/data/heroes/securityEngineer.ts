@@ -4,7 +4,7 @@ export const securityEngineer: HeroTemplate = {
   id: 'award-sage',
   name: 'Security Engineer',
   title: 'Incident Guardian',
-  role: 'Tank',
+  role: 'Security',
   rarity: 'Epic',
   icon: 'SEC',
   spriteFrame: 4,

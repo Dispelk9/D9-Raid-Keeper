@@ -32,5 +32,12 @@ export const productOwner: RaidBossTemplate = {
       target: 'party',
       duration: 2,
     },
+    {
+      name: 'Lock Scope',
+      icon: 'PO',
+      effectType: 'precision',
+      target: 'self',
+      duration: 2,
+    },
   ],
 };

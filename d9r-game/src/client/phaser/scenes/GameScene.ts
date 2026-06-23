@@ -18,6 +18,7 @@ import {
 } from '../../../shared/game/data/heroes';
 import {
   RAID_NODES,
+  SNOO_BOSS_RIGHT_KEY,
   getBossAppearance,
   getRaidNode,
 } from '../../../shared/game/data/raidBosses';
@@ -62,6 +63,7 @@ import type {
   HeroPose,
   HeroTemplate,
   PlayerSave,
+  RaidNode,
   RewardBundle,
 } from '../../../shared/game/types';
 
@@ -84,10 +86,12 @@ const STAGE_W = W - PAD * 2; // 414
 const STAGE_H = 540;
 const INFO_BAR_H = 52;
 const ACTION_H = 64;
+// Gap between the boss-HP bar and the first hero slot — skill banners appear here
+const BANNER_ZONE_H = 48;
 const BOSS_AREA_W = Math.floor(STAGE_W * 0.52);
 const HERO_AREA_X = STAGE_X + BOSS_AREA_W + PAD;
 const HERO_AREA_W = STAGE_W - BOSS_AREA_W - PAD;
-const CONTENT_H = STAGE_H - INFO_BAR_H - PAD * 2 - ACTION_H - PAD * 2;
+const CONTENT_H = STAGE_H - INFO_BAR_H - BANNER_ZONE_H - PAD - ACTION_H - PAD * 2;
 const HERO_SLOT_H = Math.floor((CONTENT_H - 4 * 5) / 5);
 const HERO_SPRITE_SIZE = 72;
 const HERO_BAR_X_OFF = HERO_SPRITE_SIZE - 2;
@@ -139,6 +143,7 @@ type HeroCardRef = {
 
 type MapNodeRef = {
   level: number;
+  name: string;
   bg: Phaser.GameObjects.Arc;
   ring: Phaser.GameObjects.Graphics;
   label: Phaser.GameObjects.Text;
@@ -188,6 +193,7 @@ export class GameScene extends Phaser.Scene {
   private raidRun: RaidRun | null = null;
   private bossTurnAnimating = false;
   private raidStatus: RaidStatus | null = null;
+  private pendingResultShow = false;
 
   // Map scroll state
   private mapScrollMin = 0;
@@ -221,10 +227,10 @@ export class GameScene extends Phaser.Scene {
   private newGameConfirmGroup!: Phaser.GameObjects.Container;
 
   // Header
-  private resourceText!: Phaser.GameObjects.Text;
   private raidLvText!: Phaser.GameObjects.Text;
 
   // Boss
+  private stageBg!: Phaser.GameObjects.Image;
   private bossAura!: Phaser.GameObjects.Arc;
   private bossImage!: Phaser.GameObjects.Image;
   private bossTitleText!: Phaser.GameObjects.Text;
@@ -489,20 +495,12 @@ export class GameScene extends Phaser.Scene {
         })
         .setOrigin(0.5);
       const subLabel = this.add
-        .text(point.x, point.y + 13, `Floor ${point.level}`, {
-          fontSize: '9px',
+        .text(point.x, point.y + 13, node.name, {
+          fontSize: '8px',
           fontStyle: 'bold',
           fontFamily: FONT.sans,
           color: '#52525b',
-        })
-        .setOrigin(0.5);
-      const nameText = this.add
-        .text(point.x, point.y + 44, node.name, {
-          fontSize: '10px',
-          fontStyle: 'bold',
-          fontFamily: FONT.sans,
-          color: '#3f3f46',
-          wordWrap: { width: 120 },
+          wordWrap: { width: 90 },
           align: 'center',
         })
         .setOrigin(0.5, 0);
@@ -514,9 +512,10 @@ export class GameScene extends Phaser.Scene {
         }
       });
 
-      nodesContainer.add([ring, bg, label, subLabel, nameText]);
+      nodesContainer.add([ring, bg, label, subLabel]);
       this.mapNodeRefs.push({
         level: point.level,
+        name: node.name,
         bg,
         ring,
         label,
@@ -727,17 +726,6 @@ export class GameScene extends Phaser.Scene {
       .on('pointerdown', () => this.toggleSettingsPanel());
     objs.push(gear);
 
-    this.resourceText = this.add
-      .text(PAD + 42, 10, 'Gold 0   Tok 0\nGem 0    EN 0', {
-        fontSize: '10px',
-        fontStyle: 'bold',
-        fontFamily: FONT.sans,
-        color: '#52525b',
-      })
-      .setOrigin(0, 0)
-      .setLineSpacing(2)
-      .setWordWrapWidth(W - 122);
-    objs.push(this.resourceText);
 
     // RAID level badge — far right
     const badgeBg = this.add.graphics();
@@ -1047,13 +1035,32 @@ export class GameScene extends Phaser.Scene {
     this.buildBattleLog();
   }
 
+  // offices.png: 3-col × 2-row grid, each cell 512×512
+  // frame 1 (top-middle) = CCO/CEO (user-confirmed)
+  // frame 4 (bottom-middle) = PM yellow office
+  private static readonly OFFICE_FRAME: Record<number, number> = {
+    1: 3, // Product Owner → bottom-left
+    2: 4, // Project Manager → bottom-middle (yellow)
+    3: 5, // Tech Lead → bottom-right
+    4: 0, // Engineering Manager → top-left
+    5: 2, // Director of Engineering → top-right
+    6: 1, // CCO → top-middle (confirmed by user)
+  };
+
   private buildBattleField() {
-    const bgImg = this.add
-      .image(STAGE_X + STAGE_W / 2, STAGE_Y + STAGE_H / 2, 'battle-bg')
+    this.stageBg = this.add
+      .image(STAGE_X + STAGE_W / 2, STAGE_Y + STAGE_H / 2, 'offices', 0)
       .setDisplaySize(STAGE_W, STAGE_H)
       .setOrigin(0.5);
 
-    this.raidGroup.add(bgImg);
+    this.raidGroup.add(this.stageBg);
+  }
+
+  private updateStageBg(raidLevel: number) {
+    const frame = GameScene.OFFICE_FRAME[raidLevel] ?? 0;
+    if (this.textures.exists('offices')) {
+      this.stageBg.setTexture('offices', frame);
+    }
   }
 
   private buildBossInfoBar() {
@@ -1111,8 +1118,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildBossSprite() {
-    const contentY = STAGE_Y + INFO_BAR_H + PAD * 2;
-    const contentH = STAGE_H - INFO_BAR_H - PAD * 2 - ACTION_H - PAD;
+    const contentY = STAGE_Y + INFO_BAR_H + BANNER_ZONE_H + PAD;
+    const contentH = STAGE_H - INFO_BAR_H - BANNER_ZONE_H - PAD - ACTION_H - PAD * 2;
     const bossCX = STAGE_X + Math.floor(BOSS_AREA_W / 2);
     const bossCY = contentY + Math.floor(contentH / 2);
     const bossR = 56;
@@ -1140,17 +1147,18 @@ export class GameScene extends Phaser.Scene {
       repeat: -1,
     });
 
-    // Boss image — texture is set in refreshBoss(); display size fits the circle
+    // Boss image — texture is set in refreshBoss(); hidden until first refresh
     this.bossImage = this.add
-      .image(bossCX, bossCY, 'boss-goo')
+      .image(bossCX, bossCY, SNOO_BOSS_RIGHT_KEY)
       .setDisplaySize(bossR * 2, bossR * 2)
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setVisible(false);
 
     this.raidGroup.add([this.bossAura, this.bossImage]);
   }
 
   private buildHeroSlotsUI() {
-    const contentY = STAGE_Y + INFO_BAR_H + PAD * 2;
+    const contentY = STAGE_Y + INFO_BAR_H + BANNER_ZONE_H + PAD;
     const slotW = HERO_AREA_W - PAD;
     const textX = HERO_AREA_X + HERO_BAR_X_OFF;
     const stroke = { stroke: '#000000', strokeThickness: 3 };
@@ -2043,9 +2051,6 @@ export class GameScene extends Phaser.Scene {
 
   private refreshHeader() {
     if (!this.profile) return;
-    this.resourceText.setText(
-      `Gold ${fmtCompact(this.profile.gold)}   Tok ${fmtCompact(this.profile.raidTokens)}\nGem ${fmtCompact(this.profile.gems)}    EN ${fmtCompact(this.profile.energy)}`
-    );
     this.raidLvText.setText(
       this.profile.raidLevel > RAID_NODES.length ? 'MAX' : String(this.profile.raidLevel)
     );
@@ -2071,14 +2076,18 @@ export class GameScene extends Phaser.Scene {
     const pct     = raid.hpMax > 0 ? raid.hpRemaining / raid.hpMax : 0;
     const fillW   = Math.max(1, Math.round(barW * pct));
     const pctStr  = `${Math.round(pct * 100)}% HP remaining`;
-    const topName = raid.top10[0]?.username ?? '—';
-    const topDmg  = raid.top10[0]?.damage ?? 0;
+    const topStr  = raid.top10.length === 0
+      ? 'No contributors yet — be the first!'
+      : raid.top10
+          .slice(0, 3)
+          .map((e, i) => `${['🥇','🥈','🥉'][i] ?? ''}${e.username}: ${fmtCompact(e.damage)}`)
+          .join('  ');
 
     this.raidPanelBossText.setText(`🔥 ${raid.bossName}  ·  Week ${raid.week.split('-')[1] ?? ''}`);
     this.raidPanelUserText.setText(`Your dmg: ${fmtCompact(raid.userDamage)}`);
     this.raidPanelBarFill.setPosition(PAD, this.raidPanelBarFill.y).setDisplaySize(fillW, 10);
     this.raidPanelPctText.setText(pctStr);
-    this.raidPanelTopText.setText(`🏆 ${topName}: ${fmtCompact(topDmg)}`);
+    this.raidPanelTopText.setText(topStr);
   }
 
   private refreshMap() {
@@ -2097,8 +2106,8 @@ export class GameScene extends Phaser.Scene {
       ref.ring.strokeCircle(ref.bg.x, ref.bg.y, current ? 39 : 36);
       ref.label.setAlpha(unlocked ? 1 : 0.35);
       ref.subLabel
-        .setText(completed ? 'DONE' : unlocked ? `FL ${ref.level}` : 'LOCK')
-        .setColor(completed ? '#15803d' : unlocked ? '#52525b' : '#94a3b8');
+        .setText(completed ? '✓ Done' : unlocked ? ref.name : '🔒')
+        .setColor(completed ? '#15803d' : unlocked ? '#374151' : '#94a3b8');
 
       if (unlocked) {
         ref.hit.setInteractive({ useHandCursor: true });
@@ -2200,6 +2209,8 @@ export class GameScene extends Phaser.Scene {
         .setTexture(boss.spriteKey, frame)
         .setDisplaySize(112, 112)
         .setVisible(true);
+    } else {
+      this.bossImage.setVisible(false);
     }
   }
 
@@ -2323,7 +2334,7 @@ export class GameScene extends Phaser.Scene {
   private refreshResultOverlay() {
     if (!this.battle || !this.profile) return;
     const done = this.battle.status !== 'active';
-    this.resultGroup.setVisible(done);
+    this.resultGroup.setVisible(done && !this.pendingResultShow && this.view === 'raid');
 
     if (done) {
       const won = this.battle.status === 'won';
@@ -2729,6 +2740,12 @@ export class GameScene extends Phaser.Scene {
       this.spawnEffectSprite(effectKey, this.bossCX, this.bossCY);
       if (bossDamage > 0) {
         this.spawnBossFloat(bossDamage, action === 'ultimate' ? 'ultimate' : 'damage');
+      } else if (nextBattle.status === 'active') {
+        // Check if the latest hero log entry indicates a miss
+        const latestHeroLog = nextBattle.logs.find((l) => l.tone === 'hero');
+        if (latestHeroLog?.message.includes('missed')) {
+          this.spawnBossFloat(0, 'miss');
+        }
       }
 
       // Shake boss image on hit
@@ -2783,13 +2800,18 @@ export class GameScene extends Phaser.Scene {
       if (!had) this.spawnFloat(idx, 0, 'ultimate');
     }
 
+    // Map heroId → slot index using the pre-transition hero list (for miss detection)
+    const heroIndexMap = new Map<string, number>(prevHeroes.map((h, i) => [h.id, i]));
+
     const playCollectedEffects = () => {
       healingFloats.forEach(({ index, value, kind }) =>
         this.spawnFloat(index, value, kind)
       );
 
-      this.playBossAttackCues(bossAttackCues, () => {
+      this.playBossAttackCues(bossAttackCues, damagedHeroSlots, heroIndexMap, (handledIds) => {
+        // Fallback: any heroes not yet handled by per-cue logic (no targetHeroIds data)
         damagedHeroSlots.forEach(({ index, heroId, value, ko }) => {
+          if (handledIds.has(heroId)) return;
           const slot = this.heroSlots[index];
           this.spawnFloat(index, value, 'damage');
           if (slot) {
@@ -2904,6 +2926,8 @@ export class GameScene extends Phaser.Scene {
     }
 
     void persistKeeperSave(nextProfile);
+    // Delay result overlay for victory so hero poses play first
+    if (victory) this.pendingResultShow = true;
     this.refreshAll();
     if (activeHero) {
       this.animateActiveHeroAction(activeIndex, activeHero.id, action);
@@ -2912,6 +2936,22 @@ export class GameScene extends Phaser.Scene {
 
     if (victory) {
       this.animateBossDefeat();
+
+      // Victory pose on all living heroes, then reveal result after delay
+      const livingBattle = this.battle;
+      if (livingBattle) {
+        livingBattle.heroes.forEach((hero, i) => {
+          if (hero.hp > 0) {
+            const slot = this.heroSlots[i];
+            if (slot) this.setHeroPose(slot.icon, hero.id, 'victory');
+          }
+        });
+      }
+      this.time.delayedCall(1800, () => {
+        this.pendingResultShow = false;
+        this.refreshResultOverlay();
+      });
+
       // Submit damage to the community shared raid pool
       void submitRaidDamage(runDamage).then((res) => {
         if (!res) return;
@@ -2943,34 +2983,92 @@ export class GameScene extends Phaser.Scene {
     return fresh.reverse();
   }
 
-  private playBossAttackCues(cues: BossAttackCue[], onComplete: () => void) {
+  private playBossAttackCues(
+    cues: BossAttackCue[],
+    damagedSlots: Array<{ index: number; heroId: string; value: number; ko: boolean }>,
+    heroIndexMap: Map<string, number>,
+    onComplete: (handledIds: Set<string>) => void
+  ) {
     if (cues.length === 0) {
-      onComplete();
+      onComplete(new Set());
       return;
     }
 
     this.bossTurnAnimating = true;
     this.refreshButtons();
-    let delay = 0;
 
-    cues.forEach((cue) => {
-      const attackName = cue.attackName ?? 'Attack';
-      this.time.delayedCall(delay, () => this.showBossAttackBanner(attackName));
-      delay += 820;
-    });
+    const slotByHeroId = new Map(damagedSlots.map((s) => [s.heroId, s]));
+    const handledIds = new Set<string>();
 
-    this.time.delayedCall(delay, () => {
-      this.bossTurnAnimating = false;
-      onComplete();
-      this.refreshButtons();
-    });
+    const playNext = (i: number) => {
+      if (i >= cues.length) {
+        this.bossTurnAnimating = false;
+        onComplete(handledIds);
+        this.refreshButtons();
+        return;
+      }
+
+      const cue = cues[i];
+      if (!cue) { playNext(i + 1); return; }
+
+      // Hit effects fire mid-banner (during hold phase), then banner fades → next cue
+      const frozenCue = cue;
+      const isSelfBuff = frozenCue.effectType
+        && ['rage', 'fortify', 'precision', 'evade'].includes(frozenCue.effectType)
+        && !(frozenCue.targetHeroIds?.length);
+      this.time.delayedCall(500, () => {
+        if (isSelfBuff && frozenCue.effectType) {
+          // Boss self-buff: flash the effect on the boss sprite
+          this.spawnEffectSprite(
+            GameScene.BOSS_DEBUFF_EFFECT[frozenCue.effectType],
+            this.bossCX,
+            this.bossCY,
+            140
+          );
+          return;
+        }
+
+        const targetIds = frozenCue.targetHeroIds?.length
+          ? frozenCue.targetHeroIds
+          : damagedSlots.filter((s) => !handledIds.has(s.heroId)).map((s) => s.heroId);
+
+        targetIds.forEach((heroId) => {
+          const s = slotByHeroId.get(heroId);
+          if (!s) {
+            // Boss targeted this hero but dealt no damage → miss
+            const slotIndex = heroIndexMap.get(heroId);
+            if (slotIndex !== undefined) {
+              this.spawnFloat(slotIndex, 0, 'miss');
+            }
+            return;
+          }
+          const heroSlot = this.heroSlots[s.index];
+          if (heroSlot) {
+            this.spawnEffectSprite(
+              this.getBossImpactEffectKey([frozenCue]),
+              heroSlot.iconCX,
+              heroSlot.iconCY
+            );
+          }
+          if (!handledIds.has(heroId)) {
+            this.spawnFloat(s.index, s.value, 'damage');
+            handledIds.add(heroId);
+          }
+          this.animateHeroHit(s.index, heroId, s.ko);
+        });
+      });
+
+      this.showBossAttackBanner(cue.attackName ?? 'Attack', () => playNext(i + 1));
+    };
+
+    playNext(0);
   }
 
-  private showBossAttackBanner(skillName: string) {
+  private showBossAttackBanner(skillName: string, onAfterFade?: () => void) {
     const bannerH = 42;
     const bannerW = STAGE_W - PAD * 4;
     const bannerCX = STAGE_X + STAGE_W / 2;
-    const bannerCY = STAGE_Y + 90;
+    const bannerCY = STAGE_Y + INFO_BAR_H + BANNER_ZONE_H / 2;
     const bg = this.add
       .rectangle(bannerCX, bannerCY, bannerW, bannerH, 0x7f1d1d, 0.9)
       .setDepth(42)
@@ -2997,7 +3095,11 @@ export class GameScene extends Phaser.Scene {
             targets: [bg, text],
             alpha: 0,
             duration: 220,
-            onComplete: () => { bg.destroy(); text.destroy(); },
+            onComplete: () => {
+              bg.destroy();
+              text.destroy();
+              onAfterFade?.();
+            },
           });
         });
       },
@@ -3008,7 +3110,7 @@ export class GameScene extends Phaser.Scene {
     const bannerH = 42;
     const bannerW = STAGE_W - PAD * 4;
     const bannerCX = STAGE_X + STAGE_W / 2;
-    const bannerCY = STAGE_Y + STAGE_H / 2 + 20;
+    const bannerCY = STAGE_Y + INFO_BAR_H + BANNER_ZONE_H / 2;
     const bg = this.add
       .rectangle(bannerCX, bannerCY, bannerW, bannerH, 0x1e3a8a, 0.92)
       .setDepth(42)
@@ -3155,8 +3257,204 @@ export class GameScene extends Phaser.Scene {
     });
     this.lastRewards = null;
     this.resultGroup.setVisible(false);
-    this.setView('raid');
-    this.refreshAll();
+
+    // Show transition screen, then enter the raid view once it completes
+    this.showBattleTransition(node, this.battle, () => {
+      this.setView('raid');
+      this.updateStageBg(node.level);
+      this.refreshAll();
+    });
+  }
+
+  private showBattleTransition(
+    node: RaidNode,
+    battle: BattleState,
+    onComplete: () => void
+  ): void {
+    const D = 62; // depth above all groups
+    const cx = W / 2;
+    const cy = H / 2;
+    const { boss, heroes } = battle;
+
+    // ── Verify all required textures are present ──────────────────────────
+    const missing: string[] = [];
+    const bossTexOk = this.textures.exists(boss.spriteKey);
+    if (!bossTexOk) missing.push(boss.name);
+    if (!this.textures.exists('offices')) missing.push('offices');
+    heroes.forEach((hero) => {
+      const key = this.getHeroSpriteKey(hero.id);
+      if (!this.textures.exists(key)) missing.push(hero.name);
+    });
+
+    // ── Build overlay elements ────────────────────────────────────────────
+    const overlay = this.add
+      .rectangle(cx, cy, W, H, 0x070d1a, 0)
+      .setDepth(D);
+
+    const floorLabel = this.add
+      .text(cx, cy - 170, `FLOOR  ${node.level}`, {
+        fontSize: '13px',
+        fontFamily: FONT.sans,
+        color: '#f97316',
+        letterSpacing: 6,
+      })
+      .setOrigin(0.5)
+      .setAlpha(0)
+      .setDepth(D + 1);
+
+    const bossLabel = this.add
+      .text(cx, cy - 148, node.name.toUpperCase(), {
+        fontSize: '22px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#ffffff',
+      })
+      .setOrigin(0.5)
+      .setAlpha(0)
+      .setDepth(D + 1);
+
+    const bossSubLabel = this.add
+      .text(cx, cy - 122, node.title.toUpperCase(), {
+        fontSize: '10px',
+        fontFamily: FONT.sans,
+        color: '#9ca3af',
+        letterSpacing: 2,
+      })
+      .setOrigin(0.5)
+      .setAlpha(0)
+      .setDepth(D + 1);
+
+    // Boss sprite preview
+    let bossPreview: Phaser.GameObjects.Image | null = null;
+    if (bossTexOk) {
+      const frame = typeof boss.spriteFrame === 'number' ? boss.spriteFrame : 0;
+      bossPreview = this.add
+        .image(cx, cy + 10, boss.spriteKey, frame)
+        .setDisplaySize(148, 148)
+        .setAlpha(0)
+        .setDepth(D + 1);
+    }
+
+    // Decorative divider
+    const divLeft = this.add
+      .rectangle(cx - 80, cy + 92, 60, 1, 0x374151)
+      .setAlpha(0)
+      .setDepth(D + 1);
+    const divRight = this.add
+      .rectangle(cx + 80, cy + 92, 60, 1, 0x374151)
+      .setAlpha(0)
+      .setDepth(D + 1);
+    const vsLabel = this.add
+      .text(cx, cy + 92, 'vs', {
+        fontSize: '9px',
+        fontFamily: FONT.sans,
+        color: '#6b7280',
+        letterSpacing: 2,
+      })
+      .setOrigin(0.5)
+      .setAlpha(0)
+      .setDepth(D + 1);
+
+    // Party hero icons (row)
+    const iconSize = 42;
+    const spacing  = 50;
+    const rowX0 = cx - ((heroes.length - 1) / 2) * spacing;
+    const heroIcons = heroes.map((hero, i) => {
+      const icon = this.add
+        .image(rowX0 + i * spacing, cy + 120, this.getHeroSpriteKey(hero.id))
+        .setDisplaySize(iconSize, iconSize)
+        .setCrop(0, 0, 256, 256)
+        .setAlpha(0)
+        .setDepth(D + 1);
+      this.setHeroPose(icon, hero.id, 'idle');
+      return icon;
+    });
+
+    // Loading bar
+    const barW2   = 180;
+    const barY    = cy + 170;
+    const barBg   = this.add
+      .rectangle(cx, barY, barW2, 4, 0x1f2937)
+      .setAlpha(0)
+      .setDepth(D + 1);
+    const barFill = this.add
+      .rectangle(cx - barW2 / 2, barY, 0, 4, 0xf97316)
+      .setOrigin(0, 0.5)
+      .setAlpha(0)
+      .setDepth(D + 1);
+    const statusText = this.add
+      .text(cx, barY + 14, 'Preparing battlefield…', {
+        fontSize: '9px',
+        fontFamily: FONT.sans,
+        color: '#6b7280',
+      })
+      .setOrigin(0.5)
+      .setAlpha(0)
+      .setDepth(D + 1);
+
+    const allObjs: Phaser.GameObjects.GameObject[] = [
+      overlay, floorLabel, bossLabel, bossSubLabel,
+      ...(bossPreview ? [bossPreview] : []),
+      divLeft, divRight, vsLabel,
+      ...heroIcons, barBg, barFill, statusText,
+    ];
+    const destroyAll = () => allObjs.forEach((o) => o.destroy());
+
+    // ── Animation sequence ────────────────────────────────────────────────
+    // Phase 1 — fade in overlay (180ms)
+    this.tweens.add({
+      targets: overlay,
+      alpha: 0.94,
+      duration: 180,
+      ease: 'Cubic.Out',
+      onComplete: () => {
+
+        // Phase 2 — fade in content (250ms)
+        const fadeTargets = [
+          floorLabel, bossLabel, bossSubLabel,
+          ...(bossPreview ? [bossPreview] : []),
+          divLeft, divRight, vsLabel,
+          ...heroIcons, barBg, barFill, statusText,
+        ];
+        this.tweens.add({ targets: fadeTargets, alpha: 1, duration: 250 });
+
+        // Animate bar fill over 900ms
+        this.tweens.add({
+          targets: barFill,
+          displayWidth: barW2,
+          duration: 900,
+          ease: 'Sine.InOut',
+        });
+
+        // Phase 3 — after 950ms update status and show "BATTLE START"
+        this.time.delayedCall(950, () => {
+          const allReady = missing.length === 0;
+          statusText.setText(allReady ? '✓  All assets ready' : `⚠ Missing: ${missing.join(', ')}`);
+          statusText.setColor(allReady ? '#22c55e' : '#f59e0b');
+
+          this.time.delayedCall(420, () => {
+            statusText
+              .setText('⚔  BATTLE START')
+              .setFontSize('12px')
+              .setColor('#f97316');
+
+            // Phase 4 — fade everything out (220ms) then launch battle
+            this.time.delayedCall(440, () => {
+              this.tweens.add({
+                targets: allObjs,
+                alpha: 0,
+                duration: 220,
+                ease: 'Cubic.In',
+                onComplete: () => {
+                  destroyAll();
+                  onComplete();
+                },
+              });
+            });
+          });
+        });
+      },
+    });
   }
 
   private handleDailyClaim() {
@@ -3264,11 +3562,15 @@ export class GameScene extends Phaser.Scene {
     BossSpecialEffectType,
     EffectKey
   > = {
-    berserk: EFFECT_KEYS.bossBerserk,
-    daze: EFFECT_KEYS.bossDaze,
-    silence: EFFECT_KEYS.bossSilence,
-    confuse: EFFECT_KEYS.bossConfuse,
-    blind: EFFECT_KEYS.bossBlind,
+    berserk:   EFFECT_KEYS.bossBerserk,
+    daze:      EFFECT_KEYS.bossDaze,
+    silence:   EFFECT_KEYS.bossSilence,
+    confuse:   EFFECT_KEYS.bossConfuse,
+    blind:     EFFECT_KEYS.bossBlind,
+    rage:      EFFECT_KEYS.bossBerserk,
+    fortify:   EFFECT_KEYS.bossStrike,
+    precision: EFFECT_KEYS.light,
+    evade:     EFFECT_KEYS.cosmic,
   };
 
   private getHeroSpriteConfig(heroId: string): HeroSpriteConfig {
@@ -3422,10 +3724,11 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private spawnBossFloat(value: number, kind: 'damage' | 'ultimate') {
-    const color = kind === 'ultimate' ? '#fbbf24' : '#ef4444';
+  private spawnBossFloat(value: number, kind: 'damage' | 'ultimate' | 'miss') {
+    const label = kind === 'miss' ? 'MISS' : String(value);
+    const color = kind === 'ultimate' ? '#fbbf24' : kind === 'miss' ? '#d1d5db' : '#ef4444';
     const floatText = this.add
-      .text(this.bossCX, this.bossCY - 58, String(value), {
+      .text(this.bossCX, this.bossCY - 58, label, {
         fontSize: kind === 'ultimate' ? '28px' : '24px',
         fontStyle: 'bold',
         fontFamily: FONT.sans,
@@ -3449,15 +3752,18 @@ export class GameScene extends Phaser.Scene {
   private spawnFloat(
     slotIndex: number,
     value: number,
-    kind: 'damage' | 'heal' | 'ultimate'
+    kind: 'damage' | 'heal' | 'ultimate' | 'miss'
   ) {
     const slot = this.heroSlots[slotIndex];
     if (!slot) return;
 
     const label =
-      kind === 'ultimate' ? 'LIMIT' : String(value);
+      kind === 'ultimate' ? 'LIMIT' : kind === 'miss' ? 'MISS' : String(value);
     const color =
-      kind === 'damage' ? '#ef4444' : kind === 'heal' ? '#60a5fa' : '#fbbf24';
+      kind === 'damage' ? '#ef4444'
+      : kind === 'heal' ? '#60a5fa'
+      : kind === 'miss' ? '#d1d5db'
+      : '#fbbf24';
 
     const floatText = this.add
       .text(slot.iconCX, slot.iconCY - HERO_SPRITE_SIZE / 2, label, {

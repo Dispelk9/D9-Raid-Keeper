@@ -32,5 +32,12 @@ export const directorOfEngineering: RaidBossTemplate = {
       target: 'single',
       duration: 2,
     },
+    {
+      name: 'Power Consolidation',
+      icon: 'DIR',
+      effectType: 'rage',
+      target: 'self',
+      duration: 2,
+    },
   ],
 };

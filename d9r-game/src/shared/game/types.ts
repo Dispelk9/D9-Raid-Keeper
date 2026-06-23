@@ -1,10 +1,10 @@
 export type HeroRole =
-  | 'Tank'
-  | 'Warrior'
-  | 'Mage'
-  | 'Ranger'
-  | 'Support'
-  | 'Healer';
+  | 'Frontend'
+  | 'Backend'
+  | 'DevOps'
+  | 'QA'
+  | 'Security'
+  | 'Data';
 
 export type HeroRarity = 'Common' | 'Rare' | 'Epic' | 'Legendary' | 'Mythic';
 
@@ -55,13 +55,17 @@ export type BossSpecialEffectType =
   | 'blind'
   | 'berserk'
   | 'silence'
-  | 'daze';
+  | 'daze'
+  | 'rage'
+  | 'fortify'
+  | 'precision'
+  | 'evade';
 
 export type BossSpecialSkill = {
   name: string;
   icon: string;
   effectType: BossSpecialEffectType;
-  target: 'single' | 'party';
+  target: 'single' | 'party' | 'self';
   duration: number;
 };
 
@@ -72,6 +76,7 @@ export type BattleStatusEffect = {
   accuracyModifier?: number;
   evasionModifier?: number;
   atkModifier?: number;
+  defModifier?: number;
   duration: number;
 };
 

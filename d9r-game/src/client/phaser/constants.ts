@@ -52,12 +52,12 @@ export const FONT = {
 } as const;
 
 export const ROLE_COLOR: Record<string, number> = {
-  Tank: COLORS.tank,
-  Warrior: COLORS.warrior,
-  Mage: COLORS.mage,
-  Ranger: COLORS.ranger,
-  Support: COLORS.support,
-  Healer: COLORS.healer,
+  Frontend: COLORS.mage,
+  Backend: COLORS.warrior,
+  DevOps: COLORS.support,
+  QA: COLORS.ranger,
+  Security: COLORS.tank,
+  Data: COLORS.healer,
 };
 
 export const RARITY_COLOR: Record<string, number> = {

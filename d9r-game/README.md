@@ -4,45 +4,6 @@ Full technical reference for the `d9r-game` Devvit app.
 
 ---
 
-## Changelog
-
-### Session 2 — Phaser 3 rewrite + pixel art sprites (`d295aef`)
-- Replaced the original React/HTML game client with a full **Phaser 3** game (430×760, Scale.FIT).
-- Swapped the old `heroes.png` spritesheet (20×33 tiny frames) for two 6-frame 512×512 **Snoo hero sheets** (`Snoo_heroes_left.png`, `Snoo_heroes_center.png`).
-- Added a real **battle background** and **HUD overlay image**.
-- Added 10 **boss sprites** in `public/assets/sprites/bosses/` (two worlds).
-- Introduced the **heroes view** (card grid with level, skill, upgrade) and **loot view**.
-- Added **skill cooldowns**, **LB charge** (Limit Break), and **per-hero skill unlocks** at levels 6/7/8/9/10.
-- Added **boss countdown** system — boss uses a party-wide Thread Quake when it hits zero.
-- Added animated **float numbers** (red damage, blue heal, yellow ⚡ ultimate).
-- Added **settings panel** (nav, currency tiles, daily reward, new raid button).
-- Added hero **detail sheet** (stats grid, skill/ult panels, upgrade button).
-- Full hero roster: Snoo Vanguard, Karma Duelist, Flair Archmage, Upvote Ranger, Award Sage, Automod Oracle — each with a unique role, ultimate, and level-gated skill upgrades.
-
-### Session 3 — Battle log, elite bosses, status effects, damage effects (current)
-- **Battle log panel** replaces the old hero-stats bar at the bottom of the raid screen.
-  - Shows last 7 combat events, color-coded: green (hero), red (boss), gold (reward/level-up), gray (system).
-  - Header row shows active hero, heroes alive, and current round.
-  - Level-up messages (⭐ Hero leveled up to Lv N!) injected when a battle ends.
-- **Elite bosses** appear every 5 raid levels (5, 10, 15, 20 …).
-  - +30% HP, ATK, MAG compared to a normal boss of the same level.
-  - Gold aura + ⚡ ELITE title badge instead of the normal red.
-  - Each has a rotating **special debuff skill** (see Status Effects below).
-- **Status effects** on heroes from elite boss skills:
-  | Effect | Source skill | Behaviour |
-  |---|---|---|
-  | Daze | Concussion | Hero loses their entire next turn |
-  | Silence | Void Silence | Skill/Ult blocked; falls back to basic attack |
-  | Berserk | Blood Rage | +50% ATK multiplier; Skill/Ult blocked |
-  | Confuse | Mind Warp | +32% miss chance per turn |
-  | Blind | Blinding Flash | −28% accuracy modifier (party-wide) |
-- **Damage effect sprites** (`Damage_effect.png`, 4×4 spritesheet at 384×256 per frame).
-  - Hero skills display role-matched effects over the boss on each action.
-  - Boss attacks display matching effect sprites over the hit hero slot.
-  - Boss debuff skills display effect sprites over each affected hero slot.
-
----
-
 ## Requirements
 
 - **Node 22+** — verify with `node -v`
@@ -149,56 +110,29 @@ d9r-game/
 
 ## Hero Roster
 
-Six heroes — each maps to a spritesheet frame and has a unique role skill:
+Six developer heroes — each maps to a spritesheet frame and has a unique role skill:
 
-| Hero           | Role    | Frame | Rarity    | Base Skill        | Skill unlocks at     |
-| -------------- | ------- | ----- | --------- | ----------------- | -------------------- |
-| Snoo Vanguard  | Tank    | 0     | Rare      | Shield Bash       | Lv 6, Lv 17          |
-| Flair Archmage | Mage    | 1     | Epic      | Flame Thread      | Lv 5, Lv 16          |
-| Karma Duelist  | Warrior | 2     | Epic      | Double Slash      | Lv 7, Lv 19          |
-| Automod Oracle | Support | 3     | Legendary | Protect Protocol  | Lv 10, Lv 22         |
-| Upvote Ranger  | Ranger  | 4     | Rare      | Focus Shot        | Lv 8, Lv 18          |
-| Award Sage     | Healer  | 5     | Epic      | Golden Heal       | Lv 9, Lv 20          |
+| Hero                | Role     | Frame | Rarity    | Base Skill      | Skill unlocks at |
+| ------------------- | -------- | ----- | --------- | --------------- | ---------------- |
+| Frontend Developer  | Frontend | 0     | Rare      | CSS Cascade     | Lv 6, Lv 17     |
+| Backend Developer   | Backend  | 1     | Rare      | Endpoint Strike | Lv 7, Lv 19     |
+| DevOps Engineer     | DevOps   | 2     | Epic      | Pipeline Shield | Lv 8, Lv 20     |
+| QA Tester           | QA       | 3     | Rare      | Regression Shot | Lv 8, Lv 18     |
+| Security Engineer   | Security | 4     | Epic      | Firewall Bash   | Lv 9, Lv 21     |
+| Data Engineer       | Data     | 5     | Legendary | ETL Mend        | Lv 10, Lv 22    |
 
 Stats scale per level: `base × (1 + (level − 1) × 0.085)`.
 Upgrade cost: `75 + level × 45` gold.
 
 ### Damage effect → hero role mapping
-| Role    | Effect frame | Visual       |
-| ------- | ------------ | ------------ |
-| Tank    | 14           | Starburst    |
-| Warrior | 12           | Red slash arc |
-| Mage    | 2            | Large flame  |
-| Ranger  | 13           | Explosive arc |
-| Healer  | 5            | Thunder spark |
-| Support | 6            | Lightning bolt |
-
----
-
-## Boss Rotation
-
-Normal bosses cycle through 10 types. **Every 5th raid level** spawns an Elite (+30% HP/ATK/MAG, gold aura, special debuff skill).
-
-| Raid Levels | Boss            | Sprite                          |
-| ----------- | --------------- | ------------------------------- |
-| 1–2         | Goo Spawner     | `World01_001_GreenGoo.png`      |
-| 3–4         | Talon Hawk      | `World01_003_Bird.png`          |
-| 5–7         | Flame Beast     | `World01_002_Salamander.png`    |
-| 8–10        | Shell Knight    | `World01_005_Shello.png`        |
-| 11–13       | Corsair Captain | `World01_007_Pirate.png`        |
-| 14–16       | Dark Witch      | `World01_006_Witch.png`         |
-| 17–20       | Wailing Prince  | `World01_004_WailingPrince.png` |
-| 21–24       | Laser Drone     | `World04_001_ LaserDrone.png`   |
-| 25–28       | Scout Machine   | `World04_002_ ScoutMachine.png` |
-| 29+         | Shadow Outlaw   | `World04_003_ Outlaw.png`       |
-
-Normal boss stat scaling: HP/ATK/MAG × `1 + (raidLevel − 1) × 0.10`. DEF/RES × `1 + (raidLevel − 1) × 0.06`.
-Elite multiplier on top: HP/ATK/MAG × 1.30.
-
-### Elite special skills (cycle every 5 levels)
-| Lv 5   | Lv 10 | Lv 15 | Lv 20 | Lv 25 | repeats… |
-| ------ | ----- | ----- | ----- | ----- | -------- |
-| 👁️ Blinding Flash (party blind, 3t) | 🌀 Mind Warp (single confuse, 2t) | 🔴 Blood Rage (single berserk, 2t) | 🔇 Void Silence (party silence, 2t) | 💫 Concussion (single daze, 1t) | → |
+| Role     | Effect frame | Visual         |
+| -------- | ------------ | -------------- |
+| Frontend | 2            | Large flame    |
+| Backend  | 12           | Red slash arc  |
+| DevOps   | 6            | Lightning bolt |
+| QA       | 13           | Explosive arc  |
+| Security | 14           | Starburst      |
+| Data     | 5            | Thunder spark  |
 
 ---
 
@@ -215,13 +149,17 @@ Elite multiplier on top: HP/ATK/MAG × 1.30.
 - Some skills add `accuracyBonus` or `critBonus`; some apply evasion/accuracy modifiers.
 
 ### Status effects (from elite bosses)
-| Effect | Game behaviour |
-|---|---|
-| **Daze** | Hero loses their full turn; boss immediately gets a turn |
-| **Silence** | Skill/Ult actions fall back to basic attack; logged in battle log |
-| **Berserk** | +50% physical ATK multiplier; Skill/Ult blocked |
-| **Confuse** | +32% miss penalty added to miss chance roll |
-| **Blind** | −28% `accuracyModifier` on the hero's status effect stack |
+| Effect | Target | Game behaviour |
+|---|---|---|
+| **Daze** | Hero | Hero loses their full turn; boss immediately gets a turn |
+| **Silence** | Hero | Skill/Ult actions fall back to basic attack; logged in battle log |
+| **Berserk** | Hero | +50% physical ATK multiplier; Skill/Ult blocked |
+| **Confuse** | Hero | +32% miss penalty added to miss chance roll |
+| **Blind** | Hero | −28% `accuracyModifier` on the hero's status effect stack |
+| **Rage** | Boss | Boss ATK × 1.4 for normal attacks while active |
+| **Fortify** | Boss | Boss DEF and RES × 1.35; heroes deal less damage |
+| **Precision** | Boss | +35% boss accuracy; boss attacks miss far less often |
+| **Evade** | Boss | +30% boss evasion; hero attacks miss more often |
 
 ### Boss turn
 - **Countdown** ticks down by 1 each round.
@@ -241,6 +179,19 @@ Elite multiplier on top: HP/ATK/MAG × 1.30.
 - Boss image shakes when it takes damage.
 - **Boss skill banner** — red banner with the boss's skill name appears before each boss attack.
 - **Hero skill banner** — blue banner with the hero's skill/ultimate name appears before the hero acts; the attack resolves after the banner fades (~400 ms delay).
+
+---
+
+## Community Comments
+
+Commenting on the game's Reddit post is a passive way to contribute to your run:
+
+- Any comment on the post awards the commenter **+300 gold** automatically.
+- The trigger fires server-side via Devvit's `on-comment-submit` event — no in-game action needed.
+- Gold is credited to the commenter's save in Redis immediately.
+- Use it to farm upgrade currency between energy regeneration.
+
+Server implementation: `src/server/routes/triggers.ts` → `on-comment-submit` handler.
 
 ---
 

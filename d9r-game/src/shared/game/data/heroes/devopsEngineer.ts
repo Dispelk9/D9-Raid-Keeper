@@ -4,7 +4,7 @@ export const devopsEngineer: HeroTemplate = {
   id: 'flair-archmage',
   name: 'DevOps Engineer',
   title: 'Pipeline Warden',
-  role: 'Support',
+  role: 'DevOps',
   rarity: 'Epic',
   icon: 'CI',
   spriteFrame: 2,

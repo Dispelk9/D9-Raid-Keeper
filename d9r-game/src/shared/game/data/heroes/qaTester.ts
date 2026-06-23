@@ -4,7 +4,7 @@ export const qaTester: HeroTemplate = {
   id: 'upvote-ranger',
   name: 'QA Tester',
   title: 'Bug Hunter',
-  role: 'Ranger',
+  role: 'QA',
   rarity: 'Rare',
   icon: 'QA',
   spriteFrame: 3,

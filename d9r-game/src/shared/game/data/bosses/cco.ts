@@ -32,5 +32,12 @@ export const cco: RaidBossTemplate = {
       target: 'party',
       duration: 2,
     },
+    {
+      name: 'Offshore Redirect',
+      icon: 'CCO',
+      effectType: 'evade',
+      target: 'self',
+      duration: 3,
+    },
   ],
 };

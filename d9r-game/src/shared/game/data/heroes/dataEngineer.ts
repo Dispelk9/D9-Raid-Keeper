@@ -4,7 +4,7 @@ export const dataEngineer: HeroTemplate = {
   id: 'automod-oracle',
   name: 'Data Engineer',
   title: 'Warehouse Medic',
-  role: 'Healer',
+  role: 'Data',
   rarity: 'Legendary',
   icon: 'DB',
   spriteFrame: 5,

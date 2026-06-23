@@ -32,5 +32,12 @@ export const projectManager: RaidBossTemplate = {
       target: 'single',
       duration: 2,
     },
+    {
+      name: 'Bureaucratic Shield',
+      icon: 'PM',
+      effectType: 'evade',
+      target: 'self',
+      duration: 2,
+    },
   ],
 };

@@ -22,7 +22,7 @@ export const Splash = () => {
               D9 Raid Keeper
             </h1>
             <p className="mt-2 text-sm font-semibold text-zinc-200 drop-shadow">
-              Build a party, break the raid boss, claim the loot.
+              Together with your department, fight the destiny.
             </p>
           </div>
         </div>
@@ -30,9 +30,9 @@ export const Splash = () => {
         <div className="grid grid-cols-[1fr_auto] items-center gap-3 px-5 py-4 bg-zinc-800">
           <div>
             <p className="text-xs font-bold uppercase text-zinc-400">
-              Turn-based RPG
+              Community Turn-based RPG
             </p>
-            <p className="text-lg font-black text-white">Snoo Prime is waiting</p>
+            <p className="text-lg font-black text-white">The Management is waiting</p>
           </div>
           <button
             className="h-11 rounded-md bg-orange-500 px-6 text-sm font-black text-white shadow-md transition hover:bg-orange-400 active:scale-95"

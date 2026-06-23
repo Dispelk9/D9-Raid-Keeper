@@ -32,5 +32,12 @@ export const engineeringManager: RaidBossTemplate = {
       target: 'single',
       duration: 1,
     },
+    {
+      name: 'Stack Rank Fury',
+      icon: 'EM',
+      effectType: 'rage',
+      target: 'self',
+      duration: 2,
+    },
   ],
 };
