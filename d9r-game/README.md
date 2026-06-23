@@ -229,7 +229,7 @@ Elite multiplier on top: HP/ATK/MAG × 1.30.
 - Countdown resets to 4 after the special.
 
 ### Battle log (bottom panel)
-- Displays the last 7 events (newest first) with tone-coded colours.
+- Displays the last 5 events (newest first) with tone-coded colours.
 - Green = hero action · Red = boss action · Gold = reward/level-up · Gray = system.
 - Header shows the active hero name, heroes alive count, and current round.
 - Level-up notifications (⭐ Hero leveled up!) appear when the battle ends.
@@ -239,6 +239,53 @@ Elite multiplier on top: HP/ATK/MAG × 1.30.
 - Damage effect sprite flashes over the boss when a hero acts (role-matched frame).
 - Damage effect sprite flashes over the hero slot when the boss attacks or debuffs.
 - Boss image shakes when it takes damage.
+- **Boss skill banner** — red banner with the boss's skill name appears before each boss attack.
+- **Hero skill banner** — blue banner with the hero's skill/ultimate name appears before the hero acts; the attack resolves after the banner fades (~400 ms delay).
+
+---
+
+## Community Raid
+
+Every run contributes damage to a **shared weekly boss** visible on the Corporate Tower map.
+
+### How it works
+- After a solo raid ends (win or loss), the total run damage is submitted to the community pool via `POST /api/raid/damage`.
+- The community boss has a large HP pool (50 K – 1.5 M depending on the week) shared by all players.
+- When the community boss reaches 0 HP, all players receive a victory notification and the boss resets to the next boss in the cycle.
+- A per-run damage cap (100 K) prevents single runs from dominating.
+
+### Weekly cycle (6 bosses)
+| Week | Boss                   | HP Pool   |
+| ---- | ---------------------- | --------- |
+| 1    | Product Owner          | 50,000    |
+| 2    | Project Manager        | 150,000   |
+| 3    | Tech Lead              | 300,000   |
+| 4    | Engineering Manager    | 600,000   |
+| 5    | Director of Engineering| 1,000,000 |
+| 6    | CCO                    | 1,500,000 |
+
+Week = ISO week number of the year mod 6 (cycles continuously).
+
+### Map panel
+The Corporate Tower map shows a live community panel at the top:
+- Current boss name + ISO week
+- HP bar (red, percentage remaining)
+- Your personal damage this week
+- Top contributor name + damage (🏆)
+
+### Server endpoints
+| Method | Path                | Description                                  |
+| ------ | ------------------- | -------------------------------------------- |
+| GET    | `/api/raid`         | Returns current boss HP, week, top-10 list  |
+| POST   | `/api/raid/damage`  | Body: `{ damage: number }` — adds to pool, returns updated status + `bossKilled` flag |
+
+### Redis keys
+| Key                       | Type        | Contents                                  |
+| ------------------------- | ----------- | ----------------------------------------- |
+| `raid:week`               | string      | Current ISO week key (e.g. `2025-22`)    |
+| `raid:boss`               | hash        | `{ bossIndex, hp, hpMax }`               |
+| `raid:leaderboard:<week>` | sorted set  | username → cumulative damage this week   |
+| `raid:user:<week>:<user>` | string      | Individual user damage for the week      |
 
 ---
 

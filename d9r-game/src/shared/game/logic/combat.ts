@@ -27,7 +27,7 @@ import type {
   RaidBoss,
 } from '../types';
 
-export const MAX_LOGS = 7;
+export const MAX_LOGS = 5;
 const ULTIMATE_CHARGE = 100;
 const BASE_MISS_CHANCE = 0.07;
 const MIN_MISS_CHANCE = 0.03;

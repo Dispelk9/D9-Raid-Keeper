@@ -81,13 +81,13 @@ const GAME_Y = HEADER_H + PAD; // 60
 const STAGE_X = PAD; // 8
 const STAGE_Y = GAME_Y; // 60
 const STAGE_W = W - PAD * 2; // 414
-const STAGE_H = 504;
+const STAGE_H = 540;
 const INFO_BAR_H = 52;
 const ACTION_H = 64;
 const BOSS_AREA_W = Math.floor(STAGE_W * 0.52);
 const HERO_AREA_X = STAGE_X + BOSS_AREA_W + PAD;
 const HERO_AREA_W = STAGE_W - BOSS_AREA_W - PAD;
-const CONTENT_H = STAGE_H - INFO_BAR_H - PAD - ACTION_H - PAD;
+const CONTENT_H = STAGE_H - INFO_BAR_H - PAD * 2 - ACTION_H - PAD * 2;
 const HERO_SLOT_H = Math.floor((CONTENT_H - 4 * 5) / 5);
 const HERO_SPRITE_SIZE = 72;
 const HERO_BAR_X_OFF = HERO_SPRITE_SIZE - 2;
@@ -188,6 +188,14 @@ export class GameScene extends Phaser.Scene {
   private raidRun: RaidRun | null = null;
   private bossTurnAnimating = false;
   private raidStatus: RaidStatus | null = null;
+
+  // Map scroll state
+  private mapScrollMin = 0;
+  private mapScrollMax = 0;
+  private mapDragStartPtrY = 0;
+  private mapDragStartContainerY = 0;
+  private mapIsDragging = false;
+  private mapDraggedPx = 0;
 
   // Community raid panel (on map view)
   private raidPanelBossText!: Phaser.GameObjects.Text;
@@ -357,7 +365,7 @@ export class GameScene extends Phaser.Scene {
 
   private buildMapView() {
     const title = this.add
-      .text(W / 2, GAME_Y + 4, 'Corporate Raid Map', {
+      .text(W / 2, GAME_Y + 4, 'Corporate Tower', {
         fontSize: '20px',
         fontStyle: 'bold',
         fontFamily: FONT.sans,
@@ -365,32 +373,15 @@ export class GameScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0);
     const subtitle = this.add
-      .text(W / 2, GAME_Y + 30, 'Clear each node to unlock the boss above it.', {
+      .text(W / 2, GAME_Y + 28, 'Clear each floor room to reach the CEO.', {
         fontSize: '11px',
         fontFamily: FONT.sans,
         color: '#52525b',
       })
       .setOrigin(0.5, 0);
 
-    const path = this.add.graphics();
-    path.lineStyle(5, 0x94a3b8, 0.42);
-
-    const nodePoints = RAID_NODES.map((node, index) => ({
-      level: node.level,
-      x: W / 2 + (index % 2 === 0 ? -54 : 54),
-      y: 650 - index * 92,
-    }));
-
-    nodePoints.forEach((point, index) => {
-      const next = nodePoints[index + 1];
-      if (!next) return;
-      path.lineBetween(point.x, point.y, next.x, next.y);
-    });
-
-    this.mapGroup.add([path, title, subtitle]);
-
     // ── Community Raid panel ───────────────────────────────────────────────
-    const panelY  = GAME_Y + 48;
+    const panelY  = GAME_Y + 46;
     const panelH  = 68;
     const barY    = panelY + 36;
     const barW    = W - PAD * 2;
@@ -430,6 +421,8 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(1, 0);
 
     this.mapGroup.add([
+      title,
+      subtitle,
       panelBg,
       this.raidPanelBossText,
       this.raidPanelUserText,
@@ -439,6 +432,48 @@ export class GameScene extends Phaser.Scene {
       this.raidPanelTopText,
     ]);
 
+    // ── Scrollable floor rooms ─────────────────────────────────────────────
+    const SCROLL_TOP = panelY + panelH + PAD;   // ≈184
+    const SCROLL_BOTTOM = H - 54;               // ≈706
+    const SCROLL_H = SCROLL_BOTTOM - SCROLL_TOP;
+
+    // Each floor room is spaced 100 px apart.
+    const NODE_SPACING = 100;
+
+    // Nodes sit in world-space coords (container at y=0 initially).
+    // Floor 1 (index 0) placed near SCROLL_BOTTOM, Floor 6 (index 5) near top.
+    const nodePoints = RAID_NODES.map((node, index) => ({
+      level: node.level,
+      x: W / 2 + (index % 2 === 0 ? -54 : 54),
+      // World y with container.y=0: floor 1 near bottom of visible area
+      y: SCROLL_BOTTOM - 40 - index * NODE_SPACING,
+    }));
+
+    // Scroll bounds: scrolling down (container.y grows) reveals top floors.
+    // Clamp so the topmost floor doesn't go off the top of scroll area.
+    const topFloorY = nodePoints[nodePoints.length - 1]?.y ?? 0;
+    this.mapScrollMin = 0;
+    this.mapScrollMax = Math.max(0, SCROLL_TOP + 50 - topFloorY);
+
+    // Container for scrollable nodes
+    const nodesContainer = this.add.container(0, 0);
+
+    // Mask — fixed in world space, clips nodes that leave the scroll area
+    const maskGfx = this.make.graphics({}, false);
+    maskGfx.fillRect(0, SCROLL_TOP, W, SCROLL_H);
+    nodesContainer.setMask(maskGfx.createGeometryMask());
+
+    // Path lines between floor rooms
+    const path = this.add.graphics();
+    path.lineStyle(5, 0x94a3b8, 0.42);
+    nodePoints.forEach((point, index) => {
+      const next = nodePoints[index + 1];
+      if (!next) return;
+      path.lineBetween(point.x, point.y, next.x, next.y);
+    });
+    nodesContainer.add(path);
+
+    // Build each floor room node
     nodePoints.forEach((point) => {
       const node = getRaidNode(point.level);
       const ring = this.add.graphics();
@@ -454,26 +489,32 @@ export class GameScene extends Phaser.Scene {
         })
         .setOrigin(0.5);
       const subLabel = this.add
-        .text(point.x, point.y + 13, `Lv ${point.level}`, {
+        .text(point.x, point.y + 13, `Floor ${point.level}`, {
           fontSize: '9px',
           fontStyle: 'bold',
           fontFamily: FONT.sans,
           color: '#52525b',
         })
         .setOrigin(0.5);
-      const name = this.add
-        .text(point.x, point.y + 42, node.name, {
+      const nameText = this.add
+        .text(point.x, point.y + 44, node.name, {
           fontSize: '10px',
           fontStyle: 'bold',
           fontFamily: FONT.sans,
           color: '#3f3f46',
-          wordWrap: { width: 116 },
+          wordWrap: { width: 120 },
           align: 'center',
         })
         .setOrigin(0.5, 0);
 
-      bg.on('pointerdown', () => this.openPartySelect(point.level));
-      this.mapGroup.add([ring, bg, label, subLabel, name]);
+      // Use pointerup so drag scrolling doesn't accidentally open party select
+      bg.on('pointerup', () => {
+        if (this.mapDraggedPx < 10) {
+          this.openPartySelect(point.level);
+        }
+      });
+
+      nodesContainer.add([ring, bg, label, subLabel, nameText]);
       this.mapNodeRefs.push({
         level: point.level,
         bg,
@@ -484,6 +525,37 @@ export class GameScene extends Phaser.Scene {
       });
     });
 
+    this.mapGroup.add(nodesContainer);
+
+    // Scroll interaction via scene-level pointer events
+    this.input.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+      if (this.view !== 'map') return;
+      this.mapIsDragging = true;
+      this.mapDraggedPx = 0;
+      this.mapDragStartPtrY = ptr.y;
+      this.mapDragStartContainerY = nodesContainer.y;
+    });
+
+    this.input.on('pointermove', (ptr: Phaser.Input.Pointer) => {
+      if (!this.mapIsDragging || this.view !== 'map') return;
+      const dy = ptr.y - this.mapDragStartPtrY;
+      this.mapDraggedPx = Math.abs(dy);
+      if (this.mapDraggedPx > 4) {
+        nodesContainer.setY(
+          Phaser.Math.Clamp(
+            this.mapDragStartContainerY + dy,
+            this.mapScrollMin,
+            this.mapScrollMax
+          )
+        );
+      }
+    });
+
+    this.input.on('pointerup', () => {
+      this.mapIsDragging = false;
+    });
+
+    // Bottom navigation buttons (static, outside scroll container)
     const heroesBtn = this.add
       .rectangle(PAD + 48, H - 34, 88, 38, COLORS.ink)
       .setInteractive({ useHandCursor: true });
@@ -1172,7 +1244,13 @@ export class GameScene extends Phaser.Scene {
       startX + (btnW + gap) * 2,
       '⚡ Limit'
     );
-    this.ultBtnBg.on('pointerdown', () => this.handleAction('ultimate'));
+    this.ultBtnBg.on('pointerdown', () => {
+      if (!this.battle || this.battle.status !== 'active') return;
+      const activeHero = getActiveHero(this.battle);
+      if (!activeHero || !canUseUltimate(activeHero)) return;
+      const ultName = activeHero.ultimate?.name ?? '⚡ Limit Break';
+      this.showHeroSkillBanner(ultName, () => this.handleAction('ultimate'));
+    });
   }
 
   private buildActiveHighlight() {
@@ -2019,7 +2097,7 @@ export class GameScene extends Phaser.Scene {
       ref.ring.strokeCircle(ref.bg.x, ref.bg.y, current ? 39 : 36);
       ref.label.setAlpha(unlocked ? 1 : 0.35);
       ref.subLabel
-        .setText(completed ? 'DONE' : unlocked ? `Lv ${ref.level}` : 'LOCK')
+        .setText(completed ? 'DONE' : unlocked ? `FL ${ref.level}` : 'LOCK')
         .setColor(completed ? '#15803d' : unlocked ? '#52525b' : '#94a3b8');
 
       if (unlocked) {
@@ -2039,7 +2117,7 @@ export class GameScene extends Phaser.Scene {
       .slice(0, 5);
 
     const node = getRaidNode(this.selectedRaidLevel);
-    this.partyTitleText.setText(`Node ${node.level}: ${node.name}`);
+    this.partyTitleText.setText(`Floor ${node.level}: ${node.name}`);
 
     this.partyHeroRefs.forEach((ref) => {
       const hero = HEROES.find((candidate) => candidate.id === ref.heroId);
@@ -2057,9 +2135,13 @@ export class GameScene extends Phaser.Scene {
         isOwned ? 1 : 0.5
       );
       ref.label.setAlpha(isOwned ? 1 : 0.46);
+      const rarityHex = rarity
+        ? '#' + (RARITY_COLOR[rarity] ?? COLORS.rarityCommon).toString(16).padStart(6, '0')
+        : '#71717a';
       ref.subLabel
         .setText(isOwned ? `${hero?.role ?? ''} · ${rarity ?? ''}` : 'Locked')
-        .setAlpha(isOwned ? 1 : 0.5);
+        .setAlpha(isOwned ? 1 : 0.5)
+        .setColor(isOwned ? rarityHex : '#94a3b8');
       ref.check.setText(selected ? 'OK' : '');
 
       if (isOwned) {
@@ -2522,7 +2604,9 @@ export class GameScene extends Phaser.Scene {
     if (!skill) return;
 
     this.hideSkillChoice();
-    this.handleAction('skill', skill, index);
+    this.showHeroSkillBanner(skill.name, () => {
+      this.handleAction('skill', skill, index);
+    });
   }
 
   private showNewGameConfirm() {
@@ -2565,7 +2649,7 @@ export class GameScene extends Phaser.Scene {
   private openPartySelect(raidLevel: number) {
     if (!this.profile) return;
     if (raidLevel > this.profile.raidLevel) {
-      this.showNotification('Clear the lower node first.');
+      this.showNotification('Clear the floor below first.');
       return;
     }
 
@@ -2913,6 +2997,45 @@ export class GameScene extends Phaser.Scene {
             targets: [bg, text],
             alpha: 0,
             duration: 220,
+            onComplete: () => { bg.destroy(); text.destroy(); },
+          });
+        });
+      },
+    });
+  }
+
+  private showHeroSkillBanner(skillName: string, onComplete: () => void) {
+    const bannerH = 42;
+    const bannerW = STAGE_W - PAD * 4;
+    const bannerCX = STAGE_X + STAGE_W / 2;
+    const bannerCY = STAGE_Y + STAGE_H / 2 + 20;
+    const bg = this.add
+      .rectangle(bannerCX, bannerCY, bannerW, bannerH, 0x1e3a8a, 0.92)
+      .setDepth(42)
+      .setAlpha(0);
+    const text = this.add
+      .text(bannerCX, bannerCY, skillName, {
+        fontSize: '14px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#bfdbfe',
+        wordWrap: { width: bannerW - PAD * 2 },
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setDepth(43)
+      .setAlpha(0);
+    this.tweens.add({
+      targets: [bg, text],
+      alpha: 1,
+      duration: 160,
+      onComplete: () => {
+        this.time.delayedCall(400, () => {
+          onComplete();
+          this.tweens.add({
+            targets: [bg, text],
+            alpha: 0,
+            duration: 200,
             onComplete: () => { bg.destroy(); text.destroy(); },
           });
         });
