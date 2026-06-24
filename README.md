@@ -37,6 +37,13 @@ See [d9r-game/README.md](d9r-game/README.md) for the full developer reference: c
 
 ## Changelog
 
+### 2026-06-24 — Energy refill timer, community agile boost, loot display & icons
+
+- **Energy refill timer**: Energy regenerates at 1 per 3 minutes. A live countdown (`⚡ Next energy in M:SS`) shows in the Settings panel (inside the Energy tile) and in the party select view below the disabled Start button. Offline regen is applied server-side on load so players earn energy while away.
+- **Community "agile" command**: Any player commenting `agile` on the game post triggers a global +10 Energy broadcast. Every player receives the bonus on their next session load with an in-game toast notification.
+- **End-of-stage loot display**: The result overlay (RAID CLEARED / RAID FAILED) now shows a **LOOT FOUND** section listing each dropped equipment item with its icon, name, rarity, and damage bonus — appears between the rewards line and the next-boss preview.
+- **Equipment icons in Loot page**: Each item now displays a unique emoji icon (💾 USB Debug Stick, ⌨️ Mechanical Keyboard, 💻 Company MacBook, 🪑 Standing Desk, 🧥 Noise-Canceling Hoodie, ✒️ Lucky Deploy Pen, 🔑 Root Access YubiKey) to the left of the item name in both the Loot view and the end-of-stage overlay.
+
 ### 2026-06-20 — Battle log, elite bosses, status effects, damage sprites
 
 - Replaced hero-stats bar with a live **battle log panel** (7 events, color-coded by type: green/red/gold/gray); header shows active hero and alive count
