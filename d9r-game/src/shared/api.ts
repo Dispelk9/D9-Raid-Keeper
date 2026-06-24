@@ -8,6 +8,7 @@ export type ApiErrorResponse = {
 export type KeeperLoadResponse = {
   status: 'ok';
   save: PlayerSave;
+  communityBoost?: boolean;
 };
 
 export type KeeperSaveRequest = {

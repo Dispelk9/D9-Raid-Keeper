@@ -119,6 +119,8 @@ export type PlayerSave = {
   gold: number;
   gems: number;
   energy: number;
+  energyRefillAt: string | null;      // ISO timestamp for when next +1 energy is due
+  lastCommunityBoostAt: string | null; // ISO timestamp of last community "agile" boost received
   raidTokens: number;
   heroes: HeroProgress[];
   party: string[];

@@ -11,6 +11,8 @@ import {
 import type { HeroSpriteConfig } from './BootScene';
 import { loadKeeperSave, persistKeeperSave, loadRaidStatus, submitRaidDamage } from '../../keeper/api';
 import type { RaidStatus } from '../../../shared/api';
+import { generateAllHeroSprites } from '../heroSpriteGen';
+import { generateMiniBossSprites } from '../miniBossSpriteGen';
 import {
   HEROES,
   getHeroSkillChoicesForLevel,
@@ -24,6 +26,7 @@ import {
 } from '../../../shared/game/data/raidBosses';
 import {
   DAILY_REWARD,
+  ENERGY_REGEN_MS,
   HERO_GEM_UPGRADE_COST,
   LOOT_TOKEN_UPGRADE_COST,
   LOOT_BONUS_LEVEL_MAX,
@@ -195,6 +198,14 @@ export class GameScene extends Phaser.Scene {
   private raidStatus: RaidStatus | null = null;
   private pendingResultShow = false;
 
+  // Energy regen timer
+  private energyUpdateAccum = 0;
+  private settingsEnergyTimerText!: Phaser.GameObjects.Text;
+  private partyEnergyTimerText!: Phaser.GameObjects.Text;
+
+  // Result overlay loot section
+  private resultLootGroup!: Phaser.GameObjects.Container;
+
   // Map scroll state
   private mapScrollMin = 0;
   private mapScrollMax = 0;
@@ -334,8 +345,14 @@ export class GameScene extends Phaser.Scene {
 
     this.setView('title');
 
-    this.profile = await loadKeeperSave(this.username);
+    const { save, communityBoost } = await loadKeeperSave(this.username);
+    this.profile = save;
     this.selectedParty = this.profile.party.slice(0, 5);
+    if (communityBoost) {
+      this.time.delayedCall(1500, () =>
+        this.showNotification('Community typed "agile"! +10 ⚡ Energy for everyone!')
+      );
+    }
     this.refreshAll();
   }
 
@@ -651,10 +668,19 @@ export class GameScene extends Phaser.Scene {
         color: '#ffffff',
       })
       .setOrigin(0.5);
+    this.partyEnergyTimerText = this.add
+      .text(W / 2, H - 24, '', {
+        fontSize: '11px',
+        fontFamily: FONT.sans,
+        color: '#f97316',
+      })
+      .setOrigin(0.5)
+      .setVisible(false);
     this.partyGroup.add([
       this.partyTitleText,
       this.partyStartBg,
       this.partyStartText,
+      this.partyEnergyTimerText,
     ]);
   }
 
@@ -830,6 +856,18 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(0.5, 0);
       objs.push(val);
       currTexts.push(val);
+
+      // Energy tile: add refill countdown inside the tile
+      if (lbl === 'Energy') {
+        this.settingsEnergyTimerText = this.add
+          .text(tx + tileW / 2, tilesY + 43, '', {
+            fontSize: '8px',
+            fontFamily: FONT.sans,
+            color: '#f97316',
+          })
+          .setOrigin(0.5, 0);
+        objs.push(this.settingsEnergyTimerText);
+      }
     });
     this.settingsCurrTexts = currTexts;
 
@@ -992,6 +1030,7 @@ export class GameScene extends Phaser.Scene {
         this.profile.raidTokens,
       ];
       vals.forEach((v, i) => this.settingsCurrTexts[i]?.setText(fmt(v)));
+      this.settingsEnergyTimerText?.setText(this.getEnergyTimerText());
       this.refreshDailyAction();
 
       const views: View[] = ['raid', 'heroes', 'loot'];
@@ -1315,7 +1354,7 @@ export class GameScene extends Phaser.Scene {
     const overlayBg = this.add.rectangle(W / 2, H / 2, W, H, 0xffffff, 0.72);
     objs.push(overlayBg);
 
-    const panelH = 240;
+    const panelH = 300;
     const panelX = PAD * 3;
     const panelY = H / 2 - panelH / 2;
     const panelW = W - PAD * 6;
@@ -1357,12 +1396,16 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5, 0);
     objs.push(this.resultRewardsText);
 
-    // Next boss preview panel
+    // Dynamic loot section (rebuilt each time in refreshResultOverlay)
+    this.resultLootGroup = this.add.container(0, 0);
+    objs.push(this.resultLootGroup);
+
+    // Next boss preview panel — shifted down 56px to make room for loot
     this.resultNextBg = this.add.graphics();
     this.resultNextBg.fillStyle(0xf5f5f5);
     this.resultNextBg.fillRoundedRect(
       PAD * 5,
-      panelY + 106,
+      panelY + 162,
       panelW - PAD * 4,
       40,
       8
@@ -1370,7 +1413,7 @@ export class GameScene extends Phaser.Scene {
     objs.push(this.resultNextBg);
 
     this.resultNextIcon = this.add
-      .text(PAD * 7, panelY + 126, '', {
+      .text(PAD * 7, panelY + 182, '', {
         fontSize: '22px',
         fontFamily: FONT.emoji,
       })
@@ -1378,7 +1421,7 @@ export class GameScene extends Phaser.Scene {
     objs.push(this.resultNextIcon);
 
     this.resultNextName = this.add
-      .text(PAD * 12, panelY + 126, '', {
+      .text(PAD * 12, panelY + 182, '', {
         fontSize: '12px',
         fontStyle: 'bold',
         fontFamily: FONT.sans,
@@ -1387,7 +1430,7 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0, 0.5);
     objs.push(this.resultNextName);
 
-    // Next raid button
+    // Back to map button
     const nextBtnY = panelY + panelH - 30;
     const nextBtnBg = this.add.graphics();
     nextBtnBg.fillStyle(COLORS.ink);
@@ -2174,6 +2217,10 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.partyStartBg.disableInteractive();
     }
+    const timerStr = this.getEnergyTimerText();
+    this.partyEnergyTimerText
+      .setText(timerStr)
+      .setVisible(this.profile.energy < ENERGY_COST && timerStr.length > 0);
   }
 
   private refreshRaid() {
@@ -2346,6 +2393,38 @@ export class GameScene extends Phaser.Scene {
           : ''
       );
 
+      // Rebuild loot section
+      this.resultLootGroup.removeAll(true);
+      const panelY = H / 2 - 300 / 2;
+      const equipment = this.lastRewards?.equipment ?? [];
+      if (equipment.length > 0) {
+        const lootHeaderY = panelY + 102;
+        const header = this.add.text(PAD * 5, lootHeaderY, 'LOOT FOUND', {
+          fontSize: '8px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#a1a1aa',
+        });
+        this.resultLootGroup.add(header);
+        equipment.slice(0, 2).forEach((item, idx) => {
+          const itemY = lootHeaderY + 14 + idx * 34;
+          const rowBg = this.add.graphics();
+          rowBg.fillStyle(0xf5f5f4);
+          rowBg.fillRoundedRect(PAD * 5, itemY, W - PAD * 10, 28, 5);
+          const iconT = this.add.text(PAD * 6, itemY + 14, GameScene.getEquipmentIcon(item.id), {
+            fontSize: '16px', fontFamily: FONT.emoji,
+          }).setOrigin(0, 0.5);
+          const nameT = this.add.text(PAD * 6 + 22, itemY + 6, item.name, {
+            fontSize: '10px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
+          }).setOrigin(0, 0);
+          const rarityColor = '#' + (RARITY_COLOR[item.rarity] ?? COLORS.rarityCommon).toString(16).padStart(6, '0');
+          const rarityT = this.add.text(PAD * 6 + 22, itemY + 17, item.rarity, {
+            fontSize: '9px', fontFamily: FONT.sans, color: rarityColor,
+          }).setOrigin(0, 0);
+          const dmgT = this.add.text(W - PAD * 6, itemY + 14, `DMG +${item.bonus}`, {
+            fontSize: '10px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#059669',
+          }).setOrigin(1, 0.5);
+          this.resultLootGroup.add([rowBg, iconT, nameT, rarityT, dmgT]);
+        });
+      }
+
       const showNext = won && this.profile.raidLevel <= RAID_NODES.length;
       this.resultNextBg.setVisible(showNext);
       this.resultNextIcon.setVisible(showNext);
@@ -2443,7 +2522,11 @@ export class GameScene extends Phaser.Scene {
       const ibg = this.add.graphics();
       ibg.fillStyle(0xf5f5f4);
       ibg.fillRoundedRect(PAD, iy + PAD, W - PAD * 2, rowH - 2, 6);
-      const nameT = this.add.text(PAD * 2.5, iy + PAD + 5, item.name, {
+      const iconT = this.add.text(PAD + 6, iy + PAD + rowH / 2 - 4, GameScene.getEquipmentIcon(item.id), {
+        fontSize: '18px',
+        fontFamily: FONT.emoji,
+      }).setOrigin(0, 0.5);
+      const nameT = this.add.text(PAD + 28, iy + PAD + 5, item.name, {
         fontSize: '11px',
         fontStyle: 'bold',
         fontFamily: FONT.sans,
@@ -2454,7 +2537,7 @@ export class GameScene extends Phaser.Scene {
         `DMG +${item.bonus}` +
         (bonusLevel ? `  Upgrade +${bonusLevel}/${LOOT_BONUS_LEVEL_MAX}` : '');
       const bonusT = this.add.text(
-        PAD * 2.5,
+        PAD + 28,
         iy + PAD + 20,
         bonusLabel,
         {
@@ -2485,7 +2568,7 @@ export class GameScene extends Phaser.Scene {
         const capturedId = item.id;
         upgBg.on('pointerdown', () => this.handleLootUpgrade(capturedId));
       }
-      this.lootItemsGroup.add([ibg, nameT, bonusT, upgBg, upgText]);
+      this.lootItemsGroup.add([ibg, iconT, nameT, bonusT, upgBg, upgText]);
     });
 
     if (items.length === 0) {
@@ -3234,9 +3317,13 @@ export class GameScene extends Phaser.Scene {
     const battleCount =
       node.minBattles +
       Math.floor(Math.random() * (node.maxBattles - node.minBattles + 1));
+    const wasAtMax = this.profile.energy >= 100;
     const nextProfile = {
       ...this.profile,
       energy: this.profile.energy - ENERGY_COST,
+      energyRefillAt: (wasAtMax || !this.profile.energyRefillAt)
+        ? new Date(Date.now() + ENERGY_REGEN_MS).toISOString()
+        : this.profile.energyRefillAt,
       party: this.selectedParty,
       updatedAt: new Date().toISOString(),
     };
@@ -3276,19 +3363,15 @@ export class GameScene extends Phaser.Scene {
     const cy = H / 2;
     const { boss, heroes } = battle;
 
-    // ── Verify all required textures are present ──────────────────────────
-    const missing: string[] = [];
+    // ── Check PNG-based textures only (canvas sprites regenerated in Phase 1) ──
     const bossTexOk = this.textures.exists(boss.spriteKey);
+    const missing: string[] = [];
     if (!bossTexOk) missing.push(boss.name);
     if (!this.textures.exists('offices')) missing.push('offices');
-    heroes.forEach((hero) => {
-      const key = this.getHeroSpriteKey(hero.id);
-      if (!this.textures.exists(key)) missing.push(hero.name);
-    });
 
     // ── Build overlay elements ────────────────────────────────────────────
     const overlay = this.add
-      .rectangle(cx, cy, W, H, 0x070d1a, 0)
+      .rectangle(cx, cy, W, H, 0x000000, 0)
       .setDepth(D);
 
     const floorLabel = this.add
@@ -3355,18 +3438,21 @@ export class GameScene extends Phaser.Scene {
       .setAlpha(0)
       .setDepth(D + 1);
 
-    // Party hero icons (row)
+    // Party hero icons — use a safe placeholder key until textures are regenerated
     const iconSize = 42;
     const spacing  = 50;
     const rowX0 = cx - ((heroes.length - 1) / 2) * spacing;
     const heroIcons = heroes.map((hero, i) => {
+      const existingKey = this.textures.exists(this.getHeroSpriteKey(hero.id))
+        ? this.getHeroSpriteKey(hero.id)
+        : TITLE_SCREEN_KEY; // safe fallback until regeneration in Phase 1
       const icon = this.add
-        .image(rowX0 + i * spacing, cy + 120, this.getHeroSpriteKey(hero.id))
+        .image(rowX0 + i * spacing, cy + 120, existingKey)
         .setDisplaySize(iconSize, iconSize)
         .setCrop(0, 0, 256, 256)
         .setAlpha(0)
         .setDepth(D + 1);
-      this.setHeroPose(icon, hero.id, 'idle');
+      if (existingKey !== TITLE_SCREEN_KEY) this.setHeroPose(icon, hero.id, 'idle');
       return icon;
     });
 
@@ -3383,7 +3469,7 @@ export class GameScene extends Phaser.Scene {
       .setAlpha(0)
       .setDepth(D + 1);
     const statusText = this.add
-      .text(cx, barY + 14, 'Preparing battlefield…', {
+      .text(cx, barY + 14, 'Loading sprites…', {
         fontSize: '9px',
         fontFamily: FONT.sans,
         color: '#6b7280',
@@ -3401,13 +3487,26 @@ export class GameScene extends Phaser.Scene {
     const destroyAll = () => allObjs.forEach((o) => o.destroy());
 
     // ── Animation sequence ────────────────────────────────────────────────
-    // Phase 1 — fade in overlay (180ms)
+    // Phase 1 — fade to solid black (180ms)
     this.tweens.add({
       targets: overlay,
-      alpha: 0.94,
+      alpha: 1,
       duration: 180,
       ease: 'Cubic.Out',
       onComplete: () => {
+        // Overlay is now fully opaque — safe to remove/recreate canvas textures
+        // without disrupting the visible render. This fixes missing sprites on
+        // floors 2+ (canvas-based textures lose their GPU data between floors).
+        generateAllHeroSprites(this);
+        generateMiniBossSprites(this);
+
+        // Refresh hero icons now that fresh textures exist
+        heroIcons.forEach((icon, i) => {
+          const h = heroes[i];
+          if (!h) return;
+          icon.setTexture(this.getHeroSpriteKey(h.id));
+          this.setHeroPose(icon, h.id, 'idle');
+        });
 
         // Phase 2 — fade in content (250ms)
         const fadeTargets = [
@@ -3429,7 +3528,7 @@ export class GameScene extends Phaser.Scene {
         // Phase 3 — after 950ms update status and show "BATTLE START"
         this.time.delayedCall(950, () => {
           const allReady = missing.length === 0;
-          statusText.setText(allReady ? '✓  All assets ready' : `⚠ Missing: ${missing.join(', ')}`);
+          statusText.setText(allReady ? '✓  Sprites ready' : `⚠ Missing: ${missing.join(', ')}`);
           statusText.setColor(allReady ? '#22c55e' : '#f59e0b');
 
           this.time.delayedCall(420, () => {
@@ -3785,5 +3884,59 @@ export class GameScene extends Phaser.Scene {
       ease: 'Cubic.Out',
       onComplete: () => floatText.destroy(),
     });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Energy regen timer
+  // ══════════════════════════════════════════════════════════════════════
+
+  update(_time: number, delta: number) {
+    if (!this.profile || this.profile.energy >= 100 || !this.profile.energyRefillAt) return;
+    this.energyUpdateAccum += delta;
+    if (this.energyUpdateAccum >= 1000) {
+      this.energyUpdateAccum -= 1000;
+      this.refreshEnergyTimers();
+    }
+  }
+
+  private getEnergyTimerText(): string {
+    if (!this.profile || this.profile.energy >= 100 || !this.profile.energyRefillAt) return '';
+    const msLeft = new Date(this.profile.energyRefillAt).getTime() - Date.now();
+    if (msLeft <= 0) return '⚡ +1 soon…';
+    const totalSecs = Math.ceil(msLeft / 1000);
+    const mins = Math.floor(totalSecs / 60);
+    const secs = totalSecs % 60;
+    return `⚡ Next energy in ${mins}:${String(secs).padStart(2, '0')}`;
+  }
+
+  private refreshEnergyTimers() {
+    const timerText = this.getEnergyTimerText();
+    if (this.settingsEnergyTimerText && this.settingsPanelOpen) {
+      this.settingsEnergyTimerText.setText(timerText);
+    }
+    if (this.partyEnergyTimerText && this.view === 'party' && this.profile) {
+      this.partyEnergyTimerText
+        .setText(timerText)
+        .setVisible(this.profile.energy < ENERGY_COST && timerText.length > 0);
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Equipment icon helpers
+  // ══════════════════════════════════════════════════════════════════════
+
+  private static readonly EQUIPMENT_ICONS: Record<string, string> = {
+    'usb-debug-stick':        '💾',
+    'mechanical-keyboard':    '⌨️',
+    'company-macbook':        '💻',
+    'standing-desk':          '🪑',
+    'noise-canceling-hoodie': '🧥',
+    'lucky-deploy-pen':       '✒️',
+    'root-access-yubikey':    '🔑',
+  };
+
+  private static getEquipmentIcon(itemId: string): string {
+    const baseId = itemId.replace(/-\d+$/, '');
+    return GameScene.EQUIPMENT_ICONS[baseId] ?? '📦';
   }
 }

@@ -21,6 +21,8 @@ const DAILY_GOLD = 140;
 const DAILY_GEMS = 30;
 const DAILY_ENERGY = 35;
 const LEVEL_CAP = 50;
+export const ENERGY_REGEN_MS = 3 * 60 * 1000; // 3 minutes per 1 energy
+const MAX_ENERGY = 100;
 export const HERO_GEM_UPGRADE_COST = 40;
 export const HERO_STAR_MAX = 10;
 export const LOOT_TOKEN_UPGRADE_COST = 30;
@@ -33,12 +35,30 @@ export const DAILY_REWARD = {
   energy: DAILY_ENERGY,
 } as const;
 
+// Apply accumulated energy regen to a save. Call on load and after spending energy.
+export const computeEnergyRegen = (save: PlayerSave, nowMs?: number): PlayerSave => {
+  const now = nowMs ?? Date.now();
+  if (save.energy >= MAX_ENERGY) return { ...save, energyRefillAt: null };
+  const refillTs = save.energyRefillAt
+    ? new Date(save.energyRefillAt).getTime()
+    : new Date(save.updatedAt).getTime();
+  if (now < refillTs) return save;
+  const gained = Math.floor((now - refillTs) / ENERGY_REGEN_MS) + 1;
+  const newEnergy = Math.min(MAX_ENERGY, save.energy + gained);
+  const newRefillAt = newEnergy >= MAX_ENERGY
+    ? null
+    : new Date(refillTs + gained * ENERGY_REGEN_MS).toISOString();
+  return { ...save, energy: newEnergy, energyRefillAt: newRefillAt };
+};
+
 export const createInitialPlayerSave = (username: string): PlayerSave => ({
   version: 1,
   username,
   gold: 320,
   gems: 120,
   energy: 100,
+  energyRefillAt: null,
+  lastCommunityBoostAt: null,
   raidTokens: 0,
   // All heroes unlocked from the start — no roll/recruit needed.
   heroes: HEROES.map((hero) => ({
@@ -91,6 +111,8 @@ export const normalizePlayerSave = (save: PlayerSave): PlayerSave => {
     ...save,
     heroes,
     party,
+    energyRefillAt: save.energyRefillAt ?? null,
+    lastCommunityBoostAt: save.lastCommunityBoostAt ?? null,
     inventory: save.inventory.map((item) => ({
       ...item,
       bonusLevel: item.bonusLevel ?? 0,

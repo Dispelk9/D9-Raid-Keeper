@@ -14,6 +14,7 @@ import type {
 import {
   createInitialPlayerSave,
   normalizePlayerSave,
+  computeEnergyRegen,
 } from '../../shared/game/logic/progression';
 import { isPlayerSave } from '../../shared/game/validators';
 
@@ -38,13 +39,31 @@ const parseSaveRequest = (value: unknown): KeeperSaveRequest | null => {
   return { save: normalizePlayerSave(value.save) };
 };
 
+const COMMUNITY_BOOST_KEY = 'community:agile:boostedAt';
+
 api.get('/keeper', async (c) => {
   try {
     const username = await getUsername();
     const stored   = parseStoredSave(await redis.get(getSaveKey(username)));
-    const save     = stored ?? createInitialPlayerSave(username);
-    if (!stored) await redis.set(getSaveKey(username), JSON.stringify(save));
-    return c.json<KeeperLoadResponse>({ status: 'ok', save });
+    let save       = stored ?? createInitialPlayerSave(username);
+
+    // Apply offline energy regen
+    save = computeEnergyRegen(save);
+
+    // Apply community "agile" energy boost if not yet received
+    let communityBoost = false;
+    const boostTimestamp = await redis.get(COMMUNITY_BOOST_KEY);
+    if (boostTimestamp && boostTimestamp !== save.lastCommunityBoostAt) {
+      save = {
+        ...save,
+        energy: Math.min(100, save.energy + 10),
+        lastCommunityBoostAt: boostTimestamp,
+      };
+      communityBoost = true;
+    }
+
+    await redis.set(getSaveKey(username), JSON.stringify(save));
+    return c.json<KeeperLoadResponse>({ status: 'ok', save, communityBoost });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to load player save';
     return c.json<ApiErrorResponse>({ status: 'error', message }, 500);

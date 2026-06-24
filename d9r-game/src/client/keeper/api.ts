@@ -33,7 +33,7 @@ const storeLocalSave = (save: PlayerSave) => {
   window.localStorage.setItem(getLocalSaveKey(save.username), JSON.stringify(save));
 };
 
-export const loadKeeperSave = async (fallbackUsername: string) => {
+export const loadKeeperSave = async (fallbackUsername: string): Promise<{ save: PlayerSave; communityBoost: boolean }> => {
   try {
     const response = await fetch('/api/keeper');
 
@@ -43,16 +43,18 @@ export const loadKeeperSave = async (fallbackUsername: string) => {
       if (data.status === 'ok') {
         const save = normalizePlayerSave(data.save);
         storeLocalSave(save);
-        return save;
+        return { save, communityBoost: data.communityBoost ?? false };
       }
     }
   } catch {
     const localSave = loadLocalSave(fallbackUsername);
-
-    if (localSave) return localSave;
+    if (localSave) return { save: localSave, communityBoost: false };
   }
 
-  return loadLocalSave(fallbackUsername) ?? createInitialPlayerSave(fallbackUsername);
+  return {
+    save: loadLocalSave(fallbackUsername) ?? createInitialPlayerSave(fallbackUsername),
+    communityBoost: false,
+  };
 };
 
 export const persistKeeperSave = async (save: PlayerSave) => {
