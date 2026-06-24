@@ -37,6 +37,16 @@ See [d9r-game/README.md](d9r-game/README.md) for the full developer reference: c
 
 ## Changelog
 
+### 2026-06-24 — Codebase refactor: modular file structure
+
+All source files are now under 500 lines. The three large monolithic files were split into focused modules:
+
+- **`GameScene.ts`** (3929 → 470 lines) split into `scenes/GameSceneTypes.ts`, `builders/` (6 files: mapView, partyHelpView, headerSettings, raidBattle, overlays, heroesLoot), `refresh/` (battle, views), `handlers/` (actions, animations, navigation, transition).
+- **`combat.ts`** (842 → 282 lines) split into `combatCalcs.ts`, `combatEffects.ts`, `combatBoss.ts`, `battleSetup.ts`; public API unchanged.
+- **`game.tsx`** (870 → 356 lines) split into `components/uiComponents.tsx`, `battleComponents.tsx`, `heroComponents.tsx`, `viewComponents.tsx`.
+
+Also fixed two bugs in the raid transition: black screen on second raid start (canvas texture removal invalidated live sprites), and boss invisible on floors 2+ (defeat animation alpha/position not reset between raids).
+
 ### 2026-06-24 — Energy refill timer, community agile boost, loot display & icons
 
 - **Energy refill timer**: Energy regenerates at 1 per 3 minutes. A live countdown (`⚡ Next energy in M:SS`) shows in the Settings panel (inside the Energy tile) and in the party select view below the disabled Start button. Offline regen is applied server-side on load so players earn energy while away.

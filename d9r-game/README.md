@@ -52,25 +52,55 @@ d9r-game/
     ├── client/
     │   ├── game.ts               Phaser entry point (Scale.FIT 430×760, mounts Boot → Game)
     │   ├── game.html             Game iframe shell
+    │   ├── game.tsx              React game UI (App component, view shell, handlers)
     │   ├── splash.tsx            Reddit feed card (React only, no Phaser)
+    │   ├── components/
+    │   │   ├── uiComponents.tsx  StatTile, CurrencyTile, shared helpers + FloatEvent type
+    │   │   ├── battleComponents.tsx  HeroSprite, BossSprite, ActiveHeroStats
+    │   │   ├── heroComponents.tsx    CompactHeroCard, HeroDetailSheet
+    │   │   └── viewComponents.tsx    RaidView, HeroesView, LootView (full view JSX)
     │   ├── keeper/api.ts         Save/load helpers (Redis + localStorage fallback)
     │   └── phaser/
     │       ├── constants.ts      Layout constants (W, H, PAD), colour palette,
     │       │                     COLORS, FONT, ROLE_COLOR, RARITY_COLOR
-    │       └── scenes/
-    │           ├── BootScene.ts  Asset preloader — Snoo sheets, boss sprites,
-    │           │                 battle BG, HUD, damage effects spritesheet.
-    │           │                 Exports: SNOO_LEFT_SHEET_KEY, SNOO_CENTER_SHEET_KEY,
-    │           │                          HUD_KEY, DAMAGE_EFFECT_KEY + frame dims
-    │           └── GameScene.ts  All game UI in one scene:
-    │                             · Raid view: boss info bar, boss sprite, hero slots,
-    │                               action buttons, battle log panel
-    │                             · Heroes view: card grid + hero detail bottom sheet
-    │                             · Loot view: stats + item list
-    │                             · Settings panel: nav, currency tiles, daily reward
-    │                             · Result overlay: win/lose, rewards, next boss preview
-    │                             · spawnEffectSprite() — role-matched damage effects
-    │                             · spawnFloat() — floating damage/heal/ult numbers
+    │       ├── heroSpriteGen.ts  Canvas-based hero pixel-art sprite generation
+    │       ├── miniBossSpriteGen.ts  Canvas-based mini-boss sprite generation
+    │       ├── scenes/
+    │       │   ├── BootScene.ts       Asset preloader — Snoo sheets, boss sprites,
+    │       │   │                      battle BG, HUD, damage effects spritesheet
+    │       │   ├── PreloadScene.ts    Canvas sprite generation + scene handoff to Game
+    │       │   ├── GameScene.ts       Core scene: create(), update(), setView(),
+    │       │   │                      refreshAll(), showNotification(), thin method stubs
+    │       │   └── GameSceneTypes.ts  All local types (View, HeroSlotRef, MapNodeRef…)
+    │       │                          and layout constants (STAGE_W, BOSS_AREA_W…)
+    │       ├── builders/              UI construction — called once in create()
+    │       │   ├── mapView.ts         buildTitleView, buildMapView
+    │       │   ├── partyHelpView.ts   buildPartyView, buildHelpView
+    │       │   ├── headerSettings.ts  buildHeader, buildSettingsPanel,
+    │       │   │                      toggleSettingsPanel, refreshDailyAction
+    │       │   ├── raidBattle.ts      buildRaidView, buildBattleField, buildBossInfoBar,
+    │       │   │                      buildBossSprite, buildHeroSlotsUI,
+    │       │   │                      buildActionButtons, buildBattleLog
+    │       │   ├── overlays.ts        buildResultOverlay, buildSkillChoiceOverlay,
+    │       │   │                      buildNewGameConfirmOverlay
+    │       │   └── heroesLoot.ts      buildHeroesView, buildHeroCard,
+    │       │                          buildDetailSheet, buildLootView
+    │       ├── refresh/               State-to-UI sync — called on data change
+    │       │   ├── battle.ts          refreshBoss, refreshHeroSlots,
+    │       │   │                      refreshButtons, refreshBattleLog
+    │       │   └── views.ts           refreshHeader, refreshMap, refreshPartySelect,
+    │       │                          refreshRaid, refreshRaidPanel, refreshResultOverlay,
+    │       │                          refreshHeroes, refreshLoot
+    │       └── handlers/              User action + scene-transition logic
+    │           ├── actions.ts         handleAction, getNewBossAttackCues,
+    │           │                      playBossAttackCues
+    │           ├── animations.ts      showBossAttackBanner, showHeroSkillBanner,
+    │           │                      animateBossDefeat, spawnEffectSprite,
+    │           │                      spawnFloat, animateActiveHeroAction
+    │           ├── navigation.ts      handleContinue, confirmNewGame, openPartySelect,
+    │           │                      toggleSelectedPartyHero, showDetail, hideDetail,
+    │           │                      openSkillChoice, chooseSkill, handleStartRaid
+    │           └── transition.ts      showBattleTransition (loading overlay + tween chain)
     │
     ├── server/
     │   ├── index.ts              Devvit app entry + Hono router
@@ -95,15 +125,20 @@ d9r-game/
             │   │                 elite skill pool (5 rotating debuff skills)
             │   └── equipment.ts  Loot drop pool
             └── logic/
-                ├── combat.ts     Pure battle resolution:
-                │                 createBattleState(), resolveHeroAction(),
-                │                 createRaidBoss() (incl. elite scaling),
-                │                 resolveEliteBossSkill() (debuff application),
-                │                 resolveBossTurn() (normal + Thread Quake + elite),
-                │                 getMissChance() (incl. confuse penalty),
-                │                 resolveHeroStrike() (incl. berserk atkModifier),
-                │                 Daze/Silence/Berserk debuff gating in resolveHeroAction()
-                └── progression.ts Levelling, upgrade costs, daily rewards, loot rewards
+                ├── combat.ts       Public API: resolveHeroAction(), getActiveHero(),
+                │                   canUseSkill/Ultimate(), hero resolution helpers.
+                │                   Re-exports MAX_LOGS + createBattleState.
+                ├── combatCalcs.ts  Pure math: getDamage(), getMissChance(),
+                │                   getCritChance(), createLogEntry(), addLog()
+                ├── combatEffects.ts Status-effect logic: createStatusEffect(),
+                │                   addStatusEffect(), tickBattleEffects(),
+                │                   applySkillEffect()
+                ├── combatBoss.ts   Boss turn: resolveSingleBossAttack(),
+                │                   resolveEliteBossSkill(), resolveBossTurnPhase(),
+                │                   advanceHeroAndMaybeBoss()
+                ├── battleSetup.ts  State init: buildBattleHero(), createRaidBoss(),
+                │                   createBattleState()
+                └── progression.ts  Levelling, upgrade costs, daily rewards, loot rewards
 ```
 
 ---
