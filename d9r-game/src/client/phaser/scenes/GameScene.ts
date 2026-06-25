@@ -66,7 +66,7 @@ export class GameScene extends Phaser.Scene {
   mapIsDragging = false;
   mapDraggedPx = 0;
 
-  // Carousel state
+  // Carousel state (kept for compat, replaced by runner)
   mapCarouselContainer!: Phaser.GameObjects.Container;
   mapCarouselIndex = 0;
   mapCarouselCardW = 0;
@@ -74,6 +74,10 @@ export class GameScene extends Phaser.Scene {
   mapCarouselDragStartX = 0;
   mapCarouselDragStartContainerX = 0;
   mapCarouselIsDragging = false;
+
+  // Runner map state
+  mapRunnerHeroImg: Phaser.GameObjects.Image | null = null;
+  mapRunnerContainer: Phaser.GameObjects.Container | null = null;
 
   // Community raid panel (on map view)
   raidPanelBossText!: Phaser.GameObjects.Text;

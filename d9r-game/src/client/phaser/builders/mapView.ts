@@ -1,8 +1,9 @@
 import type { GameScene } from '../scenes/GameScene';
 import { COLORS, FONT, H, W, PAD } from '../constants';
 import { TITLE_SCREEN_KEY } from '../scenes/BootScene';
-import { RAID_NODES } from '../../../shared/game/data/raidBosses';
-import { GAME_Y } from '../scenes/GameSceneTypes';
+import { HERO_SPRITE_CONFIG } from '../scenes/BootScene';
+import { RAID_NODES, getBossAppearance, SNOO_BOSS_RIGHT_KEY } from '../../../shared/game/data/raidBosses';
+import { GAME_Y, FALLBACK_HERO_ID } from '../scenes/GameSceneTypes';
 
 export function buildTitleView(scene: GameScene): void {
   const bg = scene.add
@@ -34,8 +35,19 @@ export function buildTitleView(scene: GameScene): void {
   makeButton(628, 'Help', () => scene.setView('help'));
 }
 
+// Runner track constants — exported so refreshMap can recalculate positions
+export const RUNNER = {
+  OBS_SPACING: 86,   // center-to-center between obstacles in container space
+  LEAD_MARGIN: 96,   // x offset of first obstacle in container
+  OBS_W: 28,
+  OBS_H: 40,
+  BOSS_SZ: 46,
+  HERO_SZ: 54,
+  HERO_SCREEN_X_RATIO: 0.26, // hero is always at ~26% of screen width
+} as const;
+
 export function buildMapView(scene: GameScene): void {
-  // ── Community Raid panel ───────────────────────────────────────────────
+  // ── Community Raid panel ─────────────────────────────────────────────────
   const panelY = GAME_Y;
   const panelH = 62;
   const barY   = panelY + 36;
@@ -49,26 +61,21 @@ export function buildMapView(scene: GameScene): void {
     .text(PAD + 10, panelY + 6, '🔥 Loading community raid…', {
       fontSize: '10px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#f9a8d4',
     });
-
   scene.raidPanelUserText = scene.add
     .text(W - PAD - 10, panelY + 6, '', {
       fontSize: '10px', fontFamily: FONT.sans, color: '#a78bfa',
     })
     .setOrigin(1, 0);
-
   scene.raidPanelBarBg = scene.add
     .rectangle(PAD + barW / 2, barY + 4, barW, 8, 0x374151)
     .setOrigin(0.5, 0.5);
-
   scene.raidPanelBarFill = scene.add
     .rectangle(PAD, barY + 4, barW, 8, 0xef4444)
     .setOrigin(0, 0.5);
-
   scene.raidPanelPctText = scene.add
     .text(PAD + 10, barY + 10, '', {
       fontSize: '8px', fontFamily: FONT.sans, color: '#9ca3af',
     });
-
   scene.raidPanelTopText = scene.add
     .text(W - PAD - 10, barY + 10, '', {
       fontSize: '8px', fontFamily: FONT.sans, color: '#fde68a',
@@ -77,221 +84,167 @@ export function buildMapView(scene: GameScene): void {
 
   scene.mapGroup.add([
     panelBg,
-    scene.raidPanelBossText,
-    scene.raidPanelUserText,
-    scene.raidPanelBarBg,
-    scene.raidPanelBarFill,
-    scene.raidPanelPctText,
-    scene.raidPanelTopText,
+    scene.raidPanelBossText, scene.raidPanelUserText,
+    scene.raidPanelBarBg, scene.raidPanelBarFill,
+    scene.raidPanelPctText, scene.raidPanelTopText,
   ]);
 
-  // ── Carousel layout constants ──────────────────────────────────────────
-  const CAROUSEL_TOP    = panelY + panelH + PAD;
-  const CAROUSEL_BOTTOM = H - 54;
-  const CAROUSEL_H      = CAROUSEL_BOTTOM - CAROUSEL_TOP;
-  const CARD_W          = W - PAD * 6;      // ~382px — comfortable margin
-  const CARD_H          = CAROUSEL_H - 16;  // ~540px — tall card
-  const CARD_SPACING    = 20;
-  const CAROUSEL_CX     = W / 2;
-  const CARD_CY         = CAROUSEL_TOP + CAROUSEL_H / 2;
+  // ── Runner layout ────────────────────────────────────────────────────────
+  const RUNNER_TOP    = panelY + panelH + PAD;
+  const RUNNER_BOTTOM = H - 54;
+  const RUNNER_H      = RUNNER_BOTTOM - RUNNER_TOP;
+  const groundY       = RUNNER_TOP + Math.round(RUNNER_H * 0.60);
 
-  scene.mapCarouselCardW       = CARD_W;
-  scene.mapCarouselCardSpacing = CARD_SPACING;
+  const { OBS_SPACING, LEAD_MARGIN, OBS_W, OBS_H, BOSS_SZ, HERO_SZ } = RUNNER;
 
-  // Mask — clips cards outside the carousel viewport
+  // ── Static background (sky + ground, outside scrolling container) ────────
+  const skyRect = scene.add.rectangle(
+    W / 2, RUNNER_TOP + (groundY - RUNNER_TOP) / 2,
+    W, groundY - RUNNER_TOP, 0x08101e
+  );
+  const groundRect = scene.add.rectangle(
+    W / 2, (groundY + RUNNER_BOTTOM) / 2 + 1,
+    W, RUNNER_BOTTOM - groundY + 2, 0x091409
+  );
+  const gndGfx = scene.add.graphics();
+  gndGfx.lineStyle(2, 0x22c55e, 0.7);
+  gndGfx.lineBetween(0, groundY, W, groundY);
+  scene.mapGroup.add([skyRect, groundRect, gndGfx]);
+
+  // Office building silhouettes (fixed parallax background)
+  const bldgData = [
+    { x: 44,  h: 90,  w: 38 }, { x: 124, h: 64,  w: 26 },
+    { x: 208, h: 112, w: 52 }, { x: 302, h: 78,  w: 32 },
+    { x: 378, h: 100, w: 44 }, { x: 448, h: 58,  w: 24 },
+  ];
+  bldgData.forEach(({ x, h, w }) => {
+    const b = scene.add.rectangle(x, groundY - h / 2, w, h, 0x0e1a2a);
+    scene.mapGroup.add(b);
+    for (let wy = 6; wy < h - 4; wy += 10) {
+      for (let wx = 4; wx < w - 2; wx += 8) {
+        if (((x * 3 + wx * 7 + wy * 11) % 5) > 1) {
+          const win = scene.add.rectangle(
+            x - w / 2 + wx + 2, groundY - h + wy + 3, 4, 5, 0x1d3a5e, 0.7
+          );
+          scene.mapGroup.add(win);
+        }
+      }
+    }
+  });
+
+  // ── Scrollable runner container (clipped to runner area) ─────────────────
   const maskGfx = scene.make.graphics({}, false);
-  maskGfx.fillRect(0, CAROUSEL_TOP, W, CAROUSEL_H);
+  maskGfx.fillRect(0, RUNNER_TOP, W, RUNNER_H);
+  const runnerContainer = scene.add.container(0, 0);
+  runnerContainer.setMask(maskGfx.createGeometryMask());
+  scene.mapRunnerContainer = runnerContainer;
+  scene.mapGroup.add(runnerContainer);
 
-  // Horizontal container holding all cards; we scroll it left/right
-  const carouselContainer = scene.add.container(0, 0);
-  carouselContainer.setMask(maskGfx.createGeometryMask());
-  scene.mapCarouselContainer = carouselContainer;
+  // Dashed road line (scrolls with container)
+  const totalTrackW = LEAD_MARGIN * 2 + (RAID_NODES.length - 1) * OBS_SPACING;
+  const dashGfx = scene.add.graphics();
+  dashGfx.lineStyle(1, 0x22c55e, 0.16);
+  for (let dx = 0; dx < totalTrackW; dx += 22) {
+    dashGfx.lineBetween(dx, groundY - 2, dx + 12, groundY - 2);
+  }
+  runnerContainer.add(dashGfx);
 
-  // ── Build one card per floor ───────────────────────────────────────────
+  // ── Hero sprite ───────────────────────────────────────────────────────────
+  const firstHeroId = scene.profile?.party[0] ?? FALLBACK_HERO_ID;
+  const heroConfig  = HERO_SPRITE_CONFIG[firstHeroId] ?? HERO_SPRITE_CONFIG[FALLBACK_HERO_ID]!;
+  const heroImg = scene.add
+    .image(0, groundY - HERO_SZ / 2, heroConfig.key)
+    .setDisplaySize(HERO_SZ, HERO_SZ)
+    .setOrigin(0.5, 0.5);
+  scene.setHeroPose(heroImg, firstHeroId, 'idle');
+  scene.mapRunnerHeroImg = heroImg;
+  runnerContainer.add(heroImg);
+
+  // ── Boss obstacles ────────────────────────────────────────────────────────
   RAID_NODES.forEach((node, idx) => {
-    // World-x of the card center when carousel is at x=0
-    const cardCX = CAROUSEL_CX + idx * (CARD_W + CARD_SPACING);
-    const cardX  = cardCX - CARD_W / 2;   // top-left
-    const cardY  = CARD_CY - CARD_H / 2;
-
+    const cx      = LEAD_MARGIN + idx * OBS_SPACING;  // center x in container
+    const blockCY = groundY - OBS_H / 2;
     const isHidden = node.isHiddenFloor ?? false;
 
-    // ── Card background & ring ──────────────────────────────────────────
-    const bg = scene.add.rectangle(cardCX, CARD_CY, CARD_W, CARD_H, 0x1e293b);
-    bg.setOrigin(0.5);
+    // Obstacle block
+    const bg = scene.add.rectangle(cx, blockCY, OBS_W, OBS_H, 0x1e293b).setOrigin(0.5);
 
+    // Ring drawn around block (updated in refreshMap)
     const ring = scene.add.graphics();
 
-    // ── Floor badge (top-left) ──────────────────────────────────────────
-    const badgeBg = scene.add.graphics();
-    badgeBg.fillStyle(0x0f172a, 0.9);
-    badgeBg.fillRoundedRect(cardX + 14, cardY + 14, 44, 44, 8);
+    // Boss sprite above the block
+    const bossTopY = groundY - OBS_H - BOSS_SZ / 2;
+    const bossApp  = getBossAppearance(node.level);
+    const bossImg  = scene.add
+      .image(cx, bossTopY, SNOO_BOSS_RIGHT_KEY)
+      .setDisplaySize(BOSS_SZ, BOSS_SZ)
+      .setOrigin(0.5);
+    if (typeof bossApp.spriteFrame === 'number') bossImg.setFrame(bossApp.spriteFrame);
+    (scene as any)[`_bossMini_${node.level}`] = bossImg;
 
-    const floorNumText = scene.add
-      .text(cardX + 36, cardY + 36, isHidden ? '?' : String(node.level), {
-        fontSize: isHidden ? '22px' : '20px',
-        fontStyle: 'bold',
-        fontFamily: FONT.sans,
-        color: '#64748b',
+    // Status icon (✓ / ▶ / 🔒)
+    const labelY = bossTopY - BOSS_SZ / 2 - 10;
+    const label  = scene.add
+      .text(cx, labelY, isHidden ? '?' : '🔒', {
+        fontSize: '12px', fontFamily: FONT.emoji,
       })
       .setOrigin(0.5);
 
-    // ── Status badge (top-right) ────────────────────────────────────────
-    const statusText = scene.add
-      .text(cardX + CARD_W - 14, cardY + 14, '🔒', {
-        fontSize: '18px',
-        fontFamily: FONT.emoji,
+    // Boss name (short, above status icon)
+    const subLabel = scene.add
+      .text(cx, labelY - 12, isHidden ? '???' : node.name, {
+        fontSize: '7px', fontFamily: FONT.sans, color: '#475569',
+        wordWrap: { width: OBS_SPACING - 4 }, align: 'center',
       })
-      .setOrigin(1, 0);
+      .setOrigin(0.5, 1);
 
-    // ── Divider line ────────────────────────────────────────────────────
-    const divider = scene.add.graphics();
-    divider.lineStyle(1, 0x334155, 0.6);
-    divider.lineBetween(cardX + 14, cardY + 70, cardX + CARD_W - 14, cardY + 70);
-
-    // ── Boss name ───────────────────────────────────────────────────────
-    const bossNameText = scene.add
-      .text(cardCX, cardY + 100,
-        isHidden ? '???' : node.name, {
-        fontSize: '22px',
-        fontStyle: 'bold',
-        fontFamily: FONT.sans,
-        color: '#e2e8f0',
-        wordWrap: { width: CARD_W - 32 },
-        align: 'center',
+    // Floor number + title below the ground line
+    const floorNumT = scene.add
+      .text(cx, groundY + 6, isHidden ? '?' : `F${node.level}`, {
+        fontSize: '9px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#334155',
+      })
+      .setOrigin(0.5, 0);
+    const floorTitleT = scene.add
+      .text(cx, groundY + 19, isHidden ? '' : node.title, {
+        fontSize: '7px', fontFamily: FONT.sans, color: '#1e293b',
+        wordWrap: { width: OBS_SPACING - 4 }, align: 'center',
       })
       .setOrigin(0.5, 0);
 
-    // ── Floor title ─────────────────────────────────────────────────────
-    const floorTitleText = scene.add
-      .text(cardCX, cardY + 138,
-        isHidden ? 'All bosses — final stand' : node.title, {
-        fontSize: '12px',
-        fontFamily: FONT.sans,
-        color: '#64748b',
-        wordWrap: { width: CARD_W - 32 },
-        align: 'center',
-      })
-      .setOrigin(0.5, 0);
-
-    // ── Summary text ────────────────────────────────────────────────────
-    const summaryText = scene.add
-      .text(cardCX, cardY + 170,
-        isHidden ? '???' : node.summary, {
-        fontSize: '11px',
-        fontFamily: FONT.sans,
-        color: '#475569',
-        wordWrap: { width: CARD_W - 40 },
-        align: 'center',
-        lineSpacing: 4,
-      })
-      .setOrigin(0.5, 0);
-
-    // ── "Select" action button ─────────────────────────────────────────
-    const selectBtnY = cardY + CARD_H - 52;
-    const selectBtnBg = scene.add
-      .rectangle(cardCX, selectBtnY, CARD_W - 40, 40, COLORS.ink)
+    // Invisible hit area covering block + boss sprite
+    const hitH = OBS_H + BOSS_SZ + 28;
+    const hit  = scene.add
+      .rectangle(cx, groundY - OBS_H / 2 - BOSS_SZ / 2, OBS_W + 18, hitH, 0, 0)
       .setInteractive({ useHandCursor: true });
+    hit.on('pointerdown', () => {
+      if (scene.view !== 'map' || !scene.profile) return;
+      const ok = isHidden
+        ? scene.profile.raidLevel > 6
+        : node.level <= scene.profile.raidLevel;
+      if (ok) scene.openPartySelect(node.level);
+    });
 
-    const selectBtnText = scene.add
-      .text(cardCX, selectBtnY, `Floor ${node.level} — Deploy`, {
-        fontSize: '13px',
-        fontStyle: 'bold',
-        fontFamily: FONT.sans,
-        color: '#ffffff',
-      })
-      .setOrigin(0.5);
-
-    selectBtnBg.on('pointerdown', () => scene.openPartySelect(node.level));
-
-    // ── Hit area (whole card for swiping) ───────────────────────────────
-    const hit = scene.add
-      .rectangle(cardCX, CARD_CY, CARD_W, CARD_H, 0x000000, 0)
-      .setInteractive({ useHandCursor: true });
-
-    carouselContainer.add([
-      bg, ring, badgeBg, floorNumText,
-      statusText, divider,
-      bossNameText, floorTitleText, summaryText,
-      selectBtnBg, selectBtnText,
-      hit,
-    ]);
+    runnerContainer.add([bg, ring, bossImg, label, subLabel, floorNumT, floorTitleT, hit]);
 
     scene.mapNodeRefs.push({
       level: node.level,
-      name: node.name,
+      name:  node.name,
       bg,
       ring,
-      label: statusText,    // top-right status icon
-      subLabel: bossNameText, // boss name
+      label,
+      subLabel,
       hit,
-      floorX: cardX,
-      floorY: cardY,
-      floorW: CARD_W,
-      floorH: CARD_H,
+      floorX: cx - OBS_W / 2,
+      floorY: groundY - OBS_H,
+      floorW: OBS_W,
+      floorH: OBS_H,
     });
-
-    // Store extra refs for refreshMap
-    (scene as any)[`_cardSelectBtnBg_${node.level}`]   = selectBtnBg;
-    (scene as any)[`_cardSelectBtnTxt_${node.level}`]  = selectBtnText;
-    (scene as any)[`_cardFloorNum_${node.level}`]      = floorNumText;
-    (scene as any)[`_cardFloorTitle_${node.level}`]    = floorTitleText;
-    (scene as any)[`_cardSummary_${node.level}`]       = summaryText;
   });
 
-  scene.mapGroup.add(carouselContainer);
+  // Save runner constants used by refreshMap
+  (scene as any)._runnerGroundY = groundY;
 
-  // ── Swipe / drag interaction ───────────────────────────────────────────
-  scene.input.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
-    if (scene.view !== 'map') return;
-    scene.mapCarouselIsDragging = true;
-    scene.mapCarouselDragStartX = ptr.x;
-    scene.mapCarouselDragStartContainerX = carouselContainer.x;
-  });
-
-  scene.input.on('pointermove', (ptr: Phaser.Input.Pointer) => {
-    if (!scene.mapCarouselIsDragging || scene.view !== 'map') return;
-    const dx = ptr.x - scene.mapCarouselDragStartX;
-    const maxRight = 0;
-    const maxLeft  = -(RAID_NODES.length - 1) * (CARD_W + CARD_SPACING);
-    carouselContainer.x = Phaser.Math.Clamp(
-      scene.mapCarouselDragStartContainerX + dx,
-      maxLeft,
-      maxRight
-    );
-  });
-
-  scene.input.on('pointerup', (ptr: Phaser.Input.Pointer) => {
-    if (!scene.mapCarouselIsDragging || scene.view !== 'map') return;
-    scene.mapCarouselIsDragging = false;
-    const dx = ptr.x - scene.mapCarouselDragStartX;
-    let newIdx = scene.mapCarouselIndex;
-    if (dx < -40)       newIdx = Math.min(RAID_NODES.length - 1, newIdx + 1);
-    else if (dx > 40)   newIdx = Math.max(0, newIdx - 1);
-    snapCarouselTo(scene, carouselContainer, newIdx, CARD_W, CARD_SPACING);
-  });
-
-  // ── Navigation dots ────────────────────────────────────────────────────
-  const dotsY = CAROUSEL_BOTTOM - 6;
-  const DOT_R = 3;
-  const DOT_GAP = 10;
-  const totalDots = RAID_NODES.length;
-  const dotsStartX = W / 2 - ((totalDots - 1) * DOT_GAP) / 2;
-
-  const dots: Phaser.GameObjects.Arc[] = [];
-  RAID_NODES.forEach((_, i) => {
-    const dot = scene.add
-      .arc(dotsStartX + i * DOT_GAP, dotsY, DOT_R, 0, 360, false, 0x475569, 1)
-      .setInteractive({ useHandCursor: true });
-    dot.on('pointerdown', () => {
-      snapCarouselTo(scene, carouselContainer, i, CARD_W, CARD_SPACING);
-    });
-    dots.push(dot);
-    scene.mapGroup.add(dot);
-  });
-  (scene as any)._carouselDots = dots;
-
-  // ── Bottom navigation buttons ──────────────────────────────────────────
+  // ── Bottom navigation buttons ─────────────────────────────────────────────
   const heroesBtn = scene.add
     .rectangle(PAD + 48, H - 34, 88, 38, COLORS.ink)
     .setInteractive({ useHandCursor: true });
@@ -311,30 +264,4 @@ export function buildMapView(scene: GameScene): void {
     })
     .setOrigin(0.5);
   scene.mapGroup.add([heroesBtn, heroesText, lootBtn, lootText]);
-}
-
-export function snapCarouselTo(
-  scene: GameScene,
-  container: Phaser.GameObjects.Container,
-  index: number,
-  cardW: number,
-  spacing: number
-): void {
-  const clamped = Phaser.Math.Clamp(index, 0, RAID_NODES.length - 1);
-  scene.mapCarouselIndex = clamped;
-  const targetX = -clamped * (cardW + spacing);
-
-  // Update navigation dots
-  const dots: Phaser.GameObjects.Arc[] = (scene as any)._carouselDots ?? [];
-  dots.forEach((dot, i) => {
-    dot.setFillStyle(i === clamped ? 0xf97316 : 0x475569, 1);
-    dot.setRadius(i === clamped ? 4 : 3);
-  });
-
-  scene.tweens.add({
-    targets: container,
-    x: targetX,
-    duration: 280,
-    ease: 'Cubic.Out',
-  });
 }

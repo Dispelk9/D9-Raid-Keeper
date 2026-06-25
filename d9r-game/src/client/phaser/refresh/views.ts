@@ -2,7 +2,9 @@ import type { GameScene } from '../scenes/GameScene';
 import { COLORS, FONT, H, W, PAD, RARITY_COLOR } from '../constants';
 import { HEROES, getHeroSkillChoicesForLevel } from '../../../shared/game/data/heroes';
 import { RAID_NODES, getBossAppearance, getRaidNode } from '../../../shared/game/data/raidBosses';
-import { snapCarouselTo } from '../builders/mapView';
+import { HERO_SPRITE_CONFIG } from '../scenes/BootScene';
+import { FALLBACK_HERO_ID } from '../scenes/GameSceneTypes';
+import { RUNNER } from '../builders/mapView';
 import {
   HERO_GEM_UPGRADE_COST, LOOT_BONUS_LEVEL_MAX, LOOT_TOKEN_UPGRADE_COST,
   canUpgradeHero, canUpgradeHeroWithGem, canUpgradeLootWithToken,
@@ -72,64 +74,40 @@ export function refreshMap(scene: GameScene): void {
   if (!scene.profile) return;
 
   const totalFloors = RAID_NODES.length;
+
   scene.mapNodeRefs.forEach((ref) => {
-    const node = RAID_NODES.find(n => n.level === ref.level);
-    const isHidden = node?.isHiddenFloor ?? false;
-    const completed = ref.level < scene.profile!.raidLevel;
-    const current = ref.level === Math.min(scene.profile!.raidLevel, totalFloors);
+    const node       = RAID_NODES.find(n => n.level === ref.level);
+    const isHidden   = node?.isHiddenFloor ?? false;
+    const completed  = ref.level < scene.profile!.raidLevel;
+    const current    = ref.level === Math.min(scene.profile!.raidLevel, totalFloors);
     const accessible = isHidden
       ? scene.profile!.raidLevel > 6
       : ref.level <= scene.profile!.raidLevel;
 
-    const fill = completed
-      ? 0x14532d
-      : current
-        ? 0x1e3a5f
-        : accessible
-          ? 0x1e293b
-          : isHidden
-            ? 0x120f20
-            : 0x1a1a2e;
+    // Obstacle block fill
+    const fill = completed ? 0x14532d : current ? 0x7c2d12 : accessible ? 0x1e293b : 0x0f172a;
+    ref.bg.setFillStyle(fill, accessible ? 1 : 0.45);
 
-    ref.bg.setFillStyle(fill, accessible ? 1 : 0.75);
-
+    // Obstacle ring border
     ref.ring.clear();
-    const strokeColor = completed ? 0x22c55e : current ? 0xf97316 : accessible ? 0x475569 : 0x2d2d44;
-    ref.ring.lineStyle(current ? 3 : 2, strokeColor, accessible ? 1 : 0.4);
-    ref.ring.strokeRoundedRect(ref.floorX, ref.floorY, ref.floorW, ref.floorH, 0);
+    const strokeColor = completed ? 0x22c55e : current ? 0xf97316 : 0x334155;
+    ref.ring.lineStyle(current ? 2 : 1, strokeColor, accessible ? 0.9 : 0.2);
+    ref.ring.strokeRect(ref.floorX, ref.floorY, ref.floorW, ref.floorH);
 
-    ref.label.setAlpha(accessible ? 1 : 0.5);
-    ref.label.setText(
-      completed ? '✓' : current ? '▶' : accessible ? '·' : isHidden ? '?' : '🔒'
-    );
+    // Status icon
+    ref.label
+      .setText(completed ? '✓' : current ? '▶' : isHidden ? '?' : '🔒')
+      .setAlpha(accessible ? 1 : 0.35);
 
+    // Boss name color
     ref.subLabel
-      .setText(
-        isHidden && !accessible ? 'Executive Suite ???'
-        : completed ? ref.name
-        : accessible ? ref.name
-        : 'Locked'
-      )
-      .setColor(
-        completed ? '#22c55e'
-        : current   ? '#fb923c'
-        : accessible? '#cbd5e1'
-        : '#475569'
-      );
+      .setText(isHidden && !accessible ? '???' : ref.name)
+      .setColor(completed ? '#22c55e' : current ? '#fb923c' : accessible ? '#64748b' : '#1e293b');
 
-    // Update deploy button on card
-    const btnBg  = (scene as any)[`_cardSelectBtnBg_${ref.level}`]  as Phaser.GameObjects.Rectangle | undefined;
-    const btnTxt = (scene as any)[`_cardSelectBtnTxt_${ref.level}`] as Phaser.GameObjects.Text | undefined;
-    if (btnBg && btnTxt) {
-      if (accessible) {
-        btnBg.setFillStyle(current ? 0xf97316 : COLORS.ink);
-        btnBg.setInteractive({ useHandCursor: true });
-        btnTxt.setText(current ? `▶ Deploy Floor ${ref.level}` : `Floor ${ref.level} — Deploy`);
-      } else {
-        btnBg.setFillStyle(COLORS.btnDisabled);
-        btnBg.disableInteractive();
-        btnTxt.setText(isHidden ? '🔒 Beat all 6 floors first' : '🔒 Locked');
-      }
+    // Boss mini-sprite visibility
+    const bossImg = (scene as any)[`_bossMini_${ref.level}`] as Phaser.GameObjects.Image | undefined;
+    if (bossImg) {
+      bossImg.setAlpha(isHidden && !accessible ? 0 : accessible ? 1 : 0.2);
     }
 
     if (accessible) {
@@ -139,17 +117,46 @@ export function refreshMap(scene: GameScene): void {
     }
   });
 
-  // Snap carousel to lowest unlocked floor (current raid floor, clamped to array bounds)
-  const targetLevel = Math.min(scene.profile!.raidLevel, RAID_NODES.length);
-  const targetIdx   = RAID_NODES.findIndex(n => n.level === targetLevel);
-  if (targetIdx >= 0 && scene.mapCarouselContainer) {
-    snapCarouselTo(
-      scene,
-      scene.mapCarouselContainer,
-      targetIdx,
-      scene.mapCarouselCardW,
-      scene.mapCarouselCardSpacing
-    );
+  // ── Scroll runner so hero is at HERO_SCREEN_X_RATIO of screen ────────────
+  if (scene.mapRunnerHeroImg && scene.mapRunnerContainer) {
+    const completedCount = Math.min(scene.profile.raidLevel - 1, totalFloors);
+    const { OBS_SPACING, LEAD_MARGIN, HERO_SZ, HERO_SCREEN_X_RATIO } = RUNNER;
+
+    // Hero x position in container space
+    const obsX = (i: number) => LEAD_MARGIN + i * OBS_SPACING;
+    let heroXInTrack: number;
+    if (completedCount <= 0) {
+      heroXInTrack = obsX(0) - Math.round(OBS_SPACING * 0.55);
+    } else if (completedCount >= totalFloors) {
+      heroXInTrack = obsX(totalFloors - 1) + Math.round(OBS_SPACING * 0.55);
+    } else {
+      heroXInTrack = Math.round((obsX(completedCount - 1) + obsX(completedCount)) / 2);
+    }
+
+    scene.mapRunnerHeroImg.setY((scene as any)._runnerGroundY - HERO_SZ / 2);
+    scene.tweens.add({
+      targets: scene.mapRunnerHeroImg,
+      x: heroXInTrack,
+      duration: 380,
+      ease: 'Cubic.Out',
+    });
+
+    // Scroll container so hero lands at HERO_SCREEN_X_RATIO of screen width
+    const heroScreenX = Math.round(W * HERO_SCREEN_X_RATIO);
+    const targetContainerX = heroScreenX - heroXInTrack;
+    scene.tweens.killTweensOf(scene.mapRunnerContainer);
+    scene.tweens.add({
+      targets: scene.mapRunnerContainer,
+      x: targetContainerX,
+      duration: 500,
+      ease: 'Cubic.Out',
+    });
+
+    // Update hero sprite to match current first party member
+    const firstHeroId  = scene.profile.party[0] ?? FALLBACK_HERO_ID;
+    const heroConfig   = HERO_SPRITE_CONFIG[firstHeroId] ?? HERO_SPRITE_CONFIG[FALLBACK_HERO_ID]!;
+    scene.mapRunnerHeroImg.setTexture(heroConfig.key).setDisplaySize(HERO_SZ, HERO_SZ);
+    scene.setHeroPose(scene.mapRunnerHeroImg, firstHeroId, 'idle');
   }
 }
 

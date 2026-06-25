@@ -212,7 +212,7 @@ export function buildSettingsPanel(scene: GameScene): void {
   );
 
   const actionBtnY = actLblY + 18;
-  const actionBtnH = 42;
+  const actionBtnH = 62;
   const actionBtnW = panelW - PAD * 2; // full width
 
   scene.dailyActBg = scene.add.graphics();
@@ -241,8 +241,8 @@ export function buildSettingsPanel(scene: GameScene): void {
   });
   objs.push(scene.dailyActHit);
   scene.dailyActText = scene.add
-    .text(panelX + PAD + actionBtnW / 2, actionBtnY + 13, 'Daily Reward', {
-      fontSize: '12px',
+    .text(panelX + PAD + actionBtnW / 2, actionBtnY + 16, 'Daily Reward', {
+      fontSize: '13px',
       fontStyle: 'bold',
       fontFamily: FONT.sans,
       color: '#ffffff',
@@ -251,10 +251,10 @@ export function buildSettingsPanel(scene: GameScene): void {
   scene.dailyActSubText = scene.add
     .text(
       panelX + PAD + actionBtnW / 2,
-      actionBtnY + 29,
-      `+${DAILY_REWARD.gold}🪙 +${DAILY_REWARD.gems}💎 +${DAILY_REWARD.energy}⚡`,
+      actionBtnY + 36,
+      `+${DAILY_REWARD.gold}🪙  +${DAILY_REWARD.gems}💎  +${DAILY_REWARD.energy}⚡`,
       {
-        fontSize: '9px',
+        fontSize: '11px',
         fontStyle: 'bold',
         fontFamily: FONT.emoji,
         color: '#dcfce7',
