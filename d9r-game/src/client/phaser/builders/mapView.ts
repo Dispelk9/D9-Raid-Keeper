@@ -37,12 +37,12 @@ export function buildTitleView(scene: GameScene): void {
 
 // Runner track constants — exported so refreshMap can recalculate positions
 export const RUNNER = {
-  OBS_SPACING: 86,   // center-to-center between obstacles in container space
-  LEAD_MARGIN: 96,   // x offset of first obstacle in container
-  OBS_W: 28,
-  OBS_H: 40,
-  BOSS_SZ: 46,
-  HERO_SZ: 54,
+  OBS_SPACING: 108,  // center-to-center between obstacles in container space
+  LEAD_MARGIN: 110,  // x offset of first obstacle in container
+  OBS_W: 36,
+  OBS_H: 52,
+  BOSS_SZ: 58,
+  HERO_SZ: 68,
   HERO_SCREEN_X_RATIO: 0.26, // hero is always at ~26% of screen width
 } as const;
 
@@ -149,7 +149,29 @@ export function buildMapView(scene: GameScene): void {
   }
   runnerContainer.add(dashGfx);
 
-  // ── Hero sprite ───────────────────────────────────────────────────────────
+  // ── Arrow navigation buttons (bottom-center, below runner) ─────────────
+  const BTN_Y = RUNNER_BOTTOM + Math.round((H - RUNNER_BOTTOM) / 2);
+  const makeArrow = (x: number, label: string, cb: () => void) => {
+    const bg = scene.add
+      .rectangle(x, BTN_Y, 64, 38, 0x0f172a, 0.95)
+      .setInteractive({ useHandCursor: true });
+    const txt = scene.add
+      .text(x, BTN_Y, label, {
+        fontSize: '28px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#f1f5f9',
+      })
+      .setOrigin(0.5);
+    bg.on('pointerdown', cb);
+    scene.mapGroup.add([bg, txt]);
+    return { bg, txt };
+  };
+  const leftArrow  = makeArrow(W / 2 - 56, '‹', () => scene.moveMapSelection(-1));
+  const rightArrow = makeArrow(W / 2 + 56, '›', () => scene.moveMapSelection(1));
+  scene.mapArrowLeftBg   = leftArrow.bg;
+  scene.mapArrowLeftText = leftArrow.txt;
+  scene.mapArrowRightBg   = rightArrow.bg;
+  scene.mapArrowRightText = rightArrow.txt;
+
+  // ── Hero sprite (created here, added to container AFTER nodes for correct z-order)
   const firstHeroId = scene.profile?.party[0] ?? FALLBACK_HERO_ID;
   const heroConfig  = HERO_SPRITE_CONFIG[firstHeroId] ?? HERO_SPRITE_CONFIG[FALLBACK_HERO_ID]!;
   const heroImg = scene.add
@@ -158,7 +180,6 @@ export function buildMapView(scene: GameScene): void {
     .setOrigin(0.5, 0.5);
   scene.setHeroPose(heroImg, firstHeroId, 'idle');
   scene.mapRunnerHeroImg = heroImg;
-  runnerContainer.add(heroImg);
 
   // ── Boss obstacles ────────────────────────────────────────────────────────
   RAID_NODES.forEach((node, idx) => {
@@ -186,35 +207,35 @@ export function buildMapView(scene: GameScene): void {
     const labelY = bossTopY - BOSS_SZ / 2 - 10;
     const label  = scene.add
       .text(cx, labelY, isHidden ? '?' : '🔒', {
-        fontSize: '12px', fontFamily: FONT.emoji,
+        fontSize: '15px', fontFamily: FONT.emoji,
       })
       .setOrigin(0.5);
 
     // Boss name (short, above status icon)
     const subLabel = scene.add
-      .text(cx, labelY - 12, isHidden ? '???' : node.name, {
-        fontSize: '7px', fontFamily: FONT.sans, color: '#475569',
-        wordWrap: { width: OBS_SPACING - 4 }, align: 'center',
+      .text(cx, labelY - 14, isHidden ? '???' : node.name, {
+        fontSize: '9px', fontFamily: FONT.sans, color: '#7dd3fc',
+        wordWrap: { width: OBS_SPACING - 8 }, align: 'center',
       })
       .setOrigin(0.5, 1);
 
     // Floor number + title below the ground line
     const floorNumT = scene.add
       .text(cx, groundY + 6, isHidden ? '?' : `F${node.level}`, {
-        fontSize: '9px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#334155',
+        fontSize: '11px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#94a3b8',
       })
       .setOrigin(0.5, 0);
     const floorTitleT = scene.add
-      .text(cx, groundY + 19, isHidden ? '' : node.title, {
-        fontSize: '7px', fontFamily: FONT.sans, color: '#1e293b',
-        wordWrap: { width: OBS_SPACING - 4 }, align: 'center',
+      .text(cx, groundY + 22, isHidden ? '' : node.title, {
+        fontSize: '9px', fontFamily: FONT.sans, color: '#64748b',
+        wordWrap: { width: OBS_SPACING - 8 }, align: 'center',
       })
       .setOrigin(0.5, 0);
 
     // Invisible hit area covering block + boss sprite
     const hitH = OBS_H + BOSS_SZ + 28;
     const hit  = scene.add
-      .rectangle(cx, groundY - OBS_H / 2 - BOSS_SZ / 2, OBS_W + 18, hitH, 0, 0)
+      .rectangle(cx, groundY - OBS_H / 2 - BOSS_SZ / 2, OBS_W + 20, hitH, 0, 0)
       .setInteractive({ useHandCursor: true });
     hit.on('pointerdown', () => {
       if (scene.view !== 'map' || !scene.profile) return;
@@ -241,27 +262,10 @@ export function buildMapView(scene: GameScene): void {
     });
   });
 
+  // Hero added last so it renders on top of all obstacle blocks and boss sprites
+  runnerContainer.add(heroImg);
+
   // Save runner constants used by refreshMap
   (scene as any)._runnerGroundY = groundY;
 
-  // ── Bottom navigation buttons ─────────────────────────────────────────────
-  const heroesBtn = scene.add
-    .rectangle(PAD + 48, H - 34, 88, 38, COLORS.ink)
-    .setInteractive({ useHandCursor: true });
-  heroesBtn.on('pointerdown', () => scene.setView('heroes'));
-  const heroesText = scene.add
-    .text(PAD + 48, H - 34, 'Heroes', {
-      fontSize: '12px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#ffffff',
-    })
-    .setOrigin(0.5);
-  const lootBtn = scene.add
-    .rectangle(W - PAD - 48, H - 34, 88, 38, COLORS.ink)
-    .setInteractive({ useHandCursor: true });
-  lootBtn.on('pointerdown', () => scene.setView('loot'));
-  const lootText = scene.add
-    .text(W - PAD - 48, H - 34, 'Loot', {
-      fontSize: '12px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#ffffff',
-    })
-    .setOrigin(0.5);
-  scene.mapGroup.add([heroesBtn, heroesText, lootBtn, lootText]);
 }

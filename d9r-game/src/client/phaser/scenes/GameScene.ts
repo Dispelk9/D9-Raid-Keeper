@@ -19,7 +19,7 @@ import type {
   RewardBundle,
 } from '../../../shared/game/types';
 
-import type { View, HeroSlotRef, HeroCardRef, MapNodeRef, PartyHeroRef, RaidRun, SkillChoiceRef, BossAttackCue } from './GameSceneTypes';
+import type { View, HeroSlotRef, HeroCardRef, MapNodeRef, PartyHeroRef, RaidRun, SkillChoiceRef, BossAttackCue, MultiBossRef } from './GameSceneTypes';
 import { GAME_Y, STAGE_X, STAGE_Y, STAGE_W, STAGE_H, INFO_BAR_H, ACTION_H, BANNER_ZONE_H, BOSS_AREA_W, HERO_AREA_X, HERO_AREA_W, CONTENT_H, HERO_SLOT_H, HERO_SPRITE_SIZE, HERO_BAR_X_OFF, STATS_BAR_Y, HERO_FRAME_DISPLAY_W, HERO_FRAME_DISPLAY_H, FALLBACK_HERO_ID, ENERGY_COST, COMMON_HERO_POSE_COL, DEVOPS_HERO_POSE_COL, fmt, fmtCompact, clamp } from './GameSceneTypes';
 
 import { buildTitleView, buildMapView } from '../builders/mapView';
@@ -31,7 +31,7 @@ import { buildHeroesView, buildDetailSheet, buildLootView } from '../builders/he
 import { refreshBoss, refreshHeroSlots, refreshButtons, refreshBattleLog } from '../refresh/battle';
 import { refreshHeader, getOwnedHeroIds, refreshRaidPanel, refreshMap, refreshPartySelect, refreshRaid, refreshResultOverlay, refreshHeroes, refreshLoot } from '../refresh/views';
 import { handleAction, spawnEffectSprite, animateBossDefeat, showHeroSkillBanner } from '../handlers/actions';
-import { handleContinue, handleStartRaid, showBattleTransition, openPartySelect, toggleSelectedPartyHero, showDetail, hideDetail, openSkillChoice, hideSkillChoice, chooseSkill, showNewGameConfirm, hideNewGameConfirm, confirmNewGame, handleDailyClaim, handleToggleParty, handleUpgrade, handleGemUpgrade, handleLootUpgrade } from '../handlers/navigation';
+import { handleContinue, handleStartRaid, showBattleTransition, openPartySelect, toggleSelectedPartyHero, showDetail, hideDetail, openSkillChoice, hideSkillChoice, chooseSkill, showNewGameConfirm, hideNewGameConfirm, confirmNewGame, handleDailyClaim, handleToggleParty, handleUpgrade, handleGemUpgrade, handleLootUpgrade, moveMapSelection, handleSellLoot, handleEquipLoot, handleUnequipLoot } from '../handlers/navigation';
 
 export class GameScene extends Phaser.Scene {
   // State
@@ -78,6 +78,11 @@ export class GameScene extends Phaser.Scene {
   // Runner map state
   mapRunnerHeroImg: Phaser.GameObjects.Image | null = null;
   mapRunnerContainer: Phaser.GameObjects.Container | null = null;
+  mapSelectedLevel: number = -1;
+  mapArrowLeftBg: Phaser.GameObjects.Rectangle | null = null;
+  mapArrowLeftText: Phaser.GameObjects.Text | null = null;
+  mapArrowRightBg: Phaser.GameObjects.Rectangle | null = null;
+  mapArrowRightText: Phaser.GameObjects.Text | null = null;
 
   // Community raid panel (on map view)
   raidPanelBossText!: Phaser.GameObjects.Text;
@@ -107,6 +112,7 @@ export class GameScene extends Phaser.Scene {
 
   // Multi-boss side sprites (hidden floor formation)
   sideBossImages: Phaser.GameObjects.Image[] = [];
+  multiBossRefs: MultiBossRef[] = [];
 
   // Boss
   stageBg!: Phaser.GameObjects.Image;
@@ -480,7 +486,18 @@ export class GameScene extends Phaser.Scene {
   handleUpgrade(heroId: string) { handleUpgrade(this, heroId); }
   handleGemUpgrade(heroId: string) { handleGemUpgrade(this, heroId); }
   handleLootUpgrade(itemId: string) { handleLootUpgrade(this, itemId); }
+  handleSellLoot(itemId: string) { handleSellLoot(this, itemId); }
+  handleEquipLoot(heroId: string, itemId: string) { handleEquipLoot(this, heroId, itemId); }
+  handleUnequipLoot(itemId: string) { handleUnequipLoot(this, itemId); }
+  handleBossTarget(index: number): void {
+    if (!this.battle?.bossList) return;
+    const targetBoss = this.battle.bossList[index];
+    if (!targetBoss || targetBoss.hp <= 0) return;
+    this.battle = { ...this.battle, boss: targetBoss, activeBossIndex: index };
+    refreshBoss(this);
+  }
   handleStartRaid() { handleStartRaid(this); }
+  moveMapSelection(dir: number) { moveMapSelection(this, dir); }
   showBattleTransition(node: RaidNode, battle: BattleState, onComplete: () => void) {
     showBattleTransition(this, node, battle, onComplete);
   }

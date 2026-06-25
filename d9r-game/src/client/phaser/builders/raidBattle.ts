@@ -143,28 +143,63 @@ export function buildBossSprite(scene: GameScene): void {
 }
 
 export function buildSideBossSprites(scene: GameScene): void {
-  // Two flanking boss images for the hidden floor multi-boss formation.
-  // Side bosses are drawn AFTER the center boss so they render on top (closer).
+  // Vertical multi-boss slots — one per hidden-floor boss (up to 3).
+  // Each slot: image | name | HP bar | tap-to-target area.
   const contentY = STAGE_Y + INFO_BAR_H + BANNER_ZONE_H + PAD;
   const contentH = STAGE_H - INFO_BAR_H - BANNER_ZONE_H - PAD - ACTION_H - PAD * 2;
-  const bossCY   = contentY + Math.floor(contentH / 2);
+  const slotH = Math.floor(contentH / 3);
+  const bx = STAGE_X;
+  const bw = BOSS_AREA_W;
 
-  scene.sideBossImages = [];
+  scene.sideBossImages = []; // kept empty; slot images tracked via multiBossRefs
+  scene.multiBossRefs = [];
 
-  const leftImg = scene.add
-    .image(scene.bossCX - 46, bossCY + 14, SNOO_BOSS_RIGHT_KEY, 0)
-    .setDisplaySize(84, 84)
-    .setOrigin(0.5)
-    .setVisible(false);
+  for (let i = 0; i < 3; i++) {
+    const slotCY = contentY + i * slotH + Math.floor(slotH / 2);
+    const imgSize = 52;
+    const imgX = bx + 8 + imgSize / 2;
 
-  const rightImg = scene.add
-    .image(scene.bossCX + 46, bossCY + 14, SNOO_BOSS_RIGHT_KEY, 0)
-    .setDisplaySize(84, 84)
-    .setOrigin(0.5)
-    .setVisible(false);
+    const ring = scene.add.graphics();
 
-  scene.sideBossImages.push(leftImg, rightImg);
-  scene.raidGroup.add([leftImg, rightImg]);
+    const img = scene.add
+      .image(imgX, slotCY, SNOO_BOSS_RIGHT_KEY, 0)
+      .setDisplaySize(imgSize, imgSize)
+      .setOrigin(0.5)
+      .setVisible(false);
+
+    const textX = imgX + imgSize / 2 + 6;
+    const textW = bw - imgSize - 20;
+
+    const nameText = scene.add
+      .text(textX, slotCY - 14, '', {
+        fontSize: '9px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
+        wordWrap: { width: textW },
+      })
+      .setOrigin(0, 0.5);
+
+    const hpTrack = scene.add
+      .rectangle(textX + textW / 2, slotCY, textW, 6, COLORS.track)
+      .setOrigin(0.5);
+    const hpFill = scene.add
+      .rectangle(textX, slotCY, textW, 6, COLORS.boss)
+      .setOrigin(0, 0.5);
+    const hpText = scene.add
+      .text(textX, slotCY + 8, '', {
+        fontSize: '8px', fontFamily: FONT.sans, color: '#52525b',
+      })
+      .setOrigin(0, 0);
+
+    const hitArea = scene.add
+      .rectangle(bx + bw / 2, slotCY, bw, slotH - 4, 0, 0)
+      .setInteractive({ useHandCursor: true })
+      .setVisible(false);
+
+    const bossIndex = i;
+    hitArea.on('pointerdown', () => scene.handleBossTarget(bossIndex));
+
+    scene.raidGroup.add([ring, img, nameText, hpTrack, hpFill, hpText, hitArea]);
+    scene.multiBossRefs.push({ image: img, hpFill, hpText, nameText, hitArea, ring });
+  }
 }
 
 export function buildHeroSlotsUI(scene: GameScene): void {

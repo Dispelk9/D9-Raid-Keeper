@@ -184,7 +184,7 @@ const resolveHeroStrike = (
 
     return hero;
   });
-  const { heroes, boss } = applySkillEffect(
+  const { heroes, boss: updatedBoss } = applySkillEffect(
     skill,
     actor,
     chargedHeroes,
@@ -194,7 +194,31 @@ const resolveHeroStrike = (
     },
     !missed
   );
-  const status = nextBossHp <= 0 ? 'won' : state.status;
+
+  // Sync updated boss back to bossList (multi-boss mode)
+  let boss = updatedBoss;
+  let outBossList = state.bossList;
+  let outActiveIdx = state.activeBossIndex;
+  let status = state.status;
+
+  if (state.bossList && state.activeBossIndex !== undefined) {
+    const newList = state.bossList.map((b, i) => i === state.activeBossIndex ? updatedBoss : b);
+    if (newList.every(b => b.hp <= 0)) {
+      status = 'won';
+      outBossList = newList;
+    } else if (updatedBoss.hp <= 0) {
+      // Advance to next alive boss
+      const nextIdx = newList.findIndex((b, i) => i !== state.activeBossIndex && b.hp > 0);
+      outActiveIdx = nextIdx >= 0 ? nextIdx : state.activeBossIndex;
+      boss = newList[outActiveIdx!] ?? updatedBoss;
+      outBossList = newList;
+    } else {
+      outBossList = newList;
+    }
+  } else {
+    status = nextBossHp <= 0 ? 'won' : state.status;
+  }
+
   const logMessage = missed
     ? `${actor.name}'s ${skill.name} missed.`
     : `${actor.name} used ${skill.name} for ${damage}${critical ? ' CRIT' : ''}.`;
@@ -204,6 +228,7 @@ const resolveHeroStrike = (
     status,
     heroes,
     boss,
+    ...(outBossList ? { bossList: outBossList, activeBossIndex: outActiveIdx } : {}),
     totalDamage: state.totalDamage + damage,
     logs: addLog(state.logs, logMessage, status === 'won' ? 'reward' : 'hero'),
   };

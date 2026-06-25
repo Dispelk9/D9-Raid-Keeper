@@ -11,7 +11,7 @@ import type { BossAttackCue } from '../scenes/GameSceneTypes';
 import { persistKeeperSave } from '../../keeper/api';
 import {
   showBossAttackBanner, showHeroSkillBanner, animateBossDefeat,
-  spawnEffectSprite, spawnBossStatusEffects, spawnBossFloat, spawnFloat,
+  spawnEffectSprite, spawnBossFloat, spawnFloat,
   animateActiveHeroAction, animateHeroHit,
   getHeroEffectKey, getBossImpactEffectKey, BOSS_DEBUFF_EFFECT
 } from './animations';
@@ -141,8 +141,6 @@ export function handleAction(
         }
         animateHeroHit(scene, index, heroId, ko);
       });
-
-      spawnBossStatusEffects(scene, bossAttackCues, nextBattle);
     });
   };
 
@@ -331,39 +329,50 @@ export function playBossAttackCues(
     const isSelfBuff = frozenCue.effectType
       && ['rage', 'fortify', 'precision', 'evade'].includes(frozenCue.effectType)
       && !(frozenCue.targetHeroIds?.length);
-    scene.time.delayedCall(500, () => {
-      if (isSelfBuff && frozenCue.effectType) {
+
+    // Banner shows first; when it fully fades out, advance to the next cue
+    showBossAttackBanner(scene, frozenCue.attackName ?? 'Attack', () => playNext(i + 1));
+
+    if (isSelfBuff && frozenCue.effectType) {
+      // Self-buff: spawn effect on boss 200ms after banner appears (no hero damage)
+      scene.time.delayedCall(200, () => {
         spawnEffectSprite(
           scene,
-          BOSS_DEBUFF_EFFECT[frozenCue.effectType],
+          BOSS_DEBUFF_EFFECT[frozenCue.effectType!],
           scene.bossCX,
           scene.bossCY,
           140
         );
-        return;
-      }
+      });
+      return;
+    }
 
-      const targetIds = frozenCue.targetHeroIds?.length
-        ? frozenCue.targetHeroIds
-        : damagedSlots.filter((s) => !handledIds.has(s.heroId)).map((s) => s.heroId);
+    const targetIds = frozenCue.targetHeroIds?.length
+      ? frozenCue.targetHeroIds
+      : damagedSlots.filter((s) => !handledIds.has(s.heroId)).map((s) => s.heroId);
 
+    const effectKey = getBossImpactEffectKey([frozenCue]);
+
+    // Step 1 — effect sprite lands at 200ms (banner just became fully visible)
+    scene.time.delayedCall(200, () => {
+      targetIds.forEach((heroId) => {
+        const s = slotByHeroId.get(heroId);
+        const idx = s?.index ?? heroIndexMap.get(heroId);
+        const heroSlot = idx !== undefined ? scene.heroSlots[idx] : undefined;
+        if (heroSlot) {
+          spawnEffectSprite(scene, effectKey, heroSlot.iconCX, heroSlot.iconCY);
+        }
+      });
+    });
+
+    // Step 2 — damage number + hit reaction at 360ms (effect visible, banner still holding)
+    scene.time.delayedCall(360, () => {
       targetIds.forEach((heroId) => {
         const s = slotByHeroId.get(heroId);
         if (!s) {
-          const slotIndex = heroIndexMap.get(heroId);
-          if (slotIndex !== undefined) {
-            spawnFloat(scene, slotIndex, 0, 'miss');
-          }
+          const idx = heroIndexMap.get(heroId);
+          if (idx !== undefined) spawnFloat(scene, idx, 0, 'miss');
           return;
-        }
-        const heroSlot = scene.heroSlots[s.index];
-        if (heroSlot) {
-          spawnEffectSprite(
-            scene,
-            getBossImpactEffectKey([frozenCue]),
-            heroSlot.iconCX,
-            heroSlot.iconCY
-          );
         }
         if (!handledIds.has(heroId)) {
           spawnFloat(scene, s.index, s.value, 'damage');
@@ -372,8 +381,6 @@ export function playBossAttackCues(
         animateHeroHit(scene, s.index, heroId, s.ko);
       });
     });
-
-    showBossAttackBanner(scene, cue.attackName ?? 'Attack', () => playNext(i + 1));
   };
 
   playNext(0);

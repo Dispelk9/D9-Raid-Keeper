@@ -70,6 +70,15 @@ export type SkillChoiceRef = {
   metaText: Phaser.GameObjects.Text;
 };
 
+export type MultiBossRef = {
+  image: Phaser.GameObjects.Image;
+  hpFill: Phaser.GameObjects.Rectangle;
+  hpText: Phaser.GameObjects.Text;
+  nameText: Phaser.GameObjects.Text;
+  hitArea: Phaser.GameObjects.Rectangle;
+  ring: Phaser.GameObjects.Graphics;
+};
+
 export type BossAttackCue = Pick<
   BattleLogEntry,
   'attackName' | 'effectType' | 'targetHeroIds'

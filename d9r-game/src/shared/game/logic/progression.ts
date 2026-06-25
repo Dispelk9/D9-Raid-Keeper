@@ -158,8 +158,87 @@ export const getScaledStats = (
   };
 };
 
-export const getLootDamageBonus = (save: PlayerSave) =>
-  save.inventory.reduce((total, item) => total + item.bonus, 0);
+// With heroId: returns only equipped-loot bonus for that hero.
+// Without heroId (or no equippedLoot yet): returns total inventory bonus (legacy).
+export const getLootDamageBonus = (save: PlayerSave, heroId?: string): number => {
+  if (!heroId || !save.equippedLoot) {
+    return save.inventory.reduce((total, item) => total + item.bonus, 0);
+  }
+  const equippedIds = new Set(save.equippedLoot[heroId] ?? []);
+  if (equippedIds.size === 0) return 0;
+  return save.inventory
+    .filter(item => equippedIds.has(item.id))
+    .reduce((total, item) => total + item.bonus, 0);
+};
+
+export const getEquippedHeroId = (save: PlayerSave, itemId: string): string | null => {
+  const equipped = save.equippedLoot ?? {};
+  for (const [heroId, itemIds] of Object.entries(equipped)) {
+    if (itemIds.includes(itemId)) return heroId;
+  }
+  return null;
+};
+
+const SELL_PRICE: Record<string, number> = {
+  Common: 20, Rare: 60, Epic: 150, Legendary: 400, Mythic: 1000,
+};
+
+export const sellLoot = (
+  save: PlayerSave,
+  itemId: string
+): { sold: boolean; save: PlayerSave; gold?: number } => {
+  const item = save.inventory.find(i => i.id === itemId);
+  if (!item) return { sold: false, save };
+  const goldGain = SELL_PRICE[item.rarity] ?? 20;
+  const newEquipped: Record<string, string[]> = {};
+  for (const [hId, ids] of Object.entries(save.equippedLoot ?? {})) {
+    const filtered = ids.filter(id => id !== itemId);
+    if (filtered.length > 0) newEquipped[hId] = filtered;
+  }
+  return {
+    sold: true,
+    gold: goldGain,
+    save: {
+      ...save,
+      inventory: save.inventory.filter(i => i.id !== itemId),
+      gold: save.gold + goldGain,
+      equippedLoot: newEquipped,
+      updatedAt: new Date().toISOString(),
+    },
+  };
+};
+
+export const equipLoot = (
+  save: PlayerSave,
+  heroId: string,
+  itemId: string
+): { equipped: boolean; message?: string; save: PlayerSave } => {
+  if (!save.inventory.find(i => i.id === itemId)) {
+    return { equipped: false, message: 'Item not found', save };
+  }
+  const equipped: Record<string, string[]> = {};
+  for (const [hId, ids] of Object.entries(save.equippedLoot ?? {})) {
+    equipped[hId] = ids.filter(id => id !== itemId); // remove from old hero
+  }
+  const heroSlots = equipped[heroId] ?? [];
+  if (heroSlots.length >= 3) {
+    return { equipped: false, message: 'Hero already has 3 items equipped', save };
+  }
+  equipped[heroId] = [...heroSlots, itemId];
+  return {
+    equipped: true,
+    save: { ...save, equippedLoot: equipped, updatedAt: new Date().toISOString() },
+  };
+};
+
+export const unequipLoot = (save: PlayerSave, itemId: string): PlayerSave => {
+  const equipped: Record<string, string[]> = {};
+  for (const [heroId, ids] of Object.entries(save.equippedLoot ?? {})) {
+    const filtered = ids.filter(id => id !== itemId);
+    if (filtered.length > 0) equipped[heroId] = filtered;
+  }
+  return { ...save, equippedLoot: equipped, updatedAt: new Date().toISOString() };
+};
 
 export const getUpgradeCost = (level: number) => 75 + level * 45;
 

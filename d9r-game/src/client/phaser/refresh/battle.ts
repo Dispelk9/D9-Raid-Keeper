@@ -1,19 +1,17 @@
 import type { GameScene } from '../scenes/GameScene';
 import { COLORS, FONT } from '../constants';
 import { canUseSkill, canUseUltimate, getActiveHero } from '../../../shared/game/logic/combat';
-import type { BattleLogEntry } from '../../../shared/game/types';
+import type { BattleLogEntry, BossSpecialEffectType } from '../../../shared/game/types';
 import { fmt, clamp, HERO_AREA_X } from '../scenes/GameSceneTypes';
 
 export function refreshBoss(scene: GameScene): void {
   if (!scene.battle) return;
-  const { boss } = scene.battle;
+  const { boss, bossList, activeBossIndex } = scene.battle;
   const elite = boss.isElite ?? false;
-  const isMultiBoss = (boss.sideSprites?.length ?? 0) > 0;
+  const isMultiBoss = (bossList?.length ?? 0) > 1;
 
   scene.bossTitleText
-    .setText(
-      `${elite ? '⚡ ELITE · ' : ''}${boss.title.toUpperCase()}`
-    )
+    .setText(`${elite ? '⚡ ELITE · ' : ''}${boss.title.toUpperCase()}`)
     .setColor(elite ? '#d97706' : '#b91c1c');
 
   scene.bossNameText.setText(boss.name);
@@ -21,36 +19,59 @@ export function refreshBoss(scene: GameScene): void {
   scene.bossHpFill.scaleX = clamp(boss.hp / boss.maxHp);
   scene.bossAura.setFillStyle(elite ? 0xfbbf24 : COLORS.boss, 0.22);
 
-  if (isMultiBoss) {
-    // Center boss: pushed back (higher up, smaller) to show depth
-    const centerX = scene.bossCX;
-    const centerY = scene.bossCY - 18;
-    scene.bossImage.setPosition(centerX, centerY).setAlpha(1);
-    scene.bossAura.setPosition(centerX, centerY).setAlpha(1);
+  if (isMultiBoss && bossList) {
+    // Hide single-boss elements; show vertical multi-boss slots
+    scene.bossImage.setVisible(false);
+    scene.bossAura.setAlpha(0);
 
-    if (scene.textures.exists(boss.spriteKey)) {
-      const requestedFrame = boss.spriteFrame ?? 0;
-      const frame = scene.textures.getFrame(boss.spriteKey, requestedFrame) ? requestedFrame : 0;
-      scene.bossImage.setTexture(boss.spriteKey, frame).setDisplaySize(88, 88).setVisible(true);
-    }
+    bossList.forEach((b, i) => {
+      const ref = scene.multiBossRefs[i];
+      if (!ref) return;
+      const isDead = b.hp <= 0;
+      const isSelected = i === (activeBossIndex ?? 0);
 
-    // Flanking side bosses
-    boss.sideSprites!.forEach((sprite, idx) => {
-      const img = scene.sideBossImages[idx];
-      if (!img) return;
-      const offsetX = idx === 0 ? -48 : 48;
-      const sideY   = scene.bossCY + 14;
-      img.setPosition(scene.bossCX + offsetX, sideY);
-      if (scene.textures.exists(sprite.spriteKey)) {
-        const f = sprite.spriteFrame ?? 0;
-        const frame = scene.textures.getFrame(sprite.spriteKey, f) ? f : 0;
-        img.setTexture(sprite.spriteKey, frame).setDisplaySize(84, 84).setVisible(true).setAlpha(1);
+      // Image
+      if (scene.textures.exists(b.spriteKey)) {
+        const f = b.spriteFrame ?? 0;
+        const frame = scene.textures.getFrame(b.spriteKey, f) ? f : 0;
+        ref.image.setTexture(b.spriteKey, frame)
+          .setDisplaySize(52, 52)
+          .setVisible(true)
+          .setAlpha(isDead ? 0.3 : 1);
+      }
+
+      // Target ring
+      ref.ring.clear();
+      if (isSelected && !isDead) {
+        ref.ring.lineStyle(2, 0xfbbf24, 1);
+        const imgBounds = ref.image.getBounds();
+        ref.ring.strokeRect(
+          imgBounds.x - 3, imgBounds.y - 3,
+          imgBounds.width + 6, imgBounds.height + 6
+        );
+      }
+
+      // HP bar
+      ref.hpFill.scaleX = isDead ? 0 : clamp(b.hp / b.maxHp);
+      ref.hpText.setText(isDead ? 'DEFEATED' : `${fmt(b.hp)}/${fmt(b.maxHp)}`);
+      ref.nameText.setText(b.name);
+
+      // Hit area (tappable only when alive)
+      if (!isDead) {
+        ref.hitArea.setInteractive({ useHandCursor: true }).setVisible(true);
       } else {
-        img.setVisible(false);
+        ref.hitArea.disableInteractive().setVisible(false);
       }
     });
   } else {
-    // Single boss
+    // Single boss mode — hide multi-boss slots
+    scene.multiBossRefs.forEach(ref => {
+      ref.image.setVisible(false);
+      ref.ring.clear();
+      ref.hitArea.disableInteractive().setVisible(false);
+    });
+    scene.sideBossImages.forEach(img => img.setVisible(false));
+
     scene.bossImage.setPosition(scene.bossCX, scene.bossCY).setAlpha(1);
     scene.bossAura.setPosition(scene.bossCX, scene.bossCY).setAlpha(1);
 
@@ -61,9 +82,6 @@ export function refreshBoss(scene: GameScene): void {
     } else {
       scene.bossImage.setVisible(false);
     }
-
-    // Hide side bosses when not a multi-boss encounter
-    scene.sideBossImages.forEach(img => img.setVisible(false));
   }
 }
 
@@ -172,13 +190,30 @@ export function refreshBattleLog(scene: GameScene): void {
     system: '#6b7280',
   };
 
+  const EFFECT_DESC: Record<BossSpecialEffectType, string> = {
+    berserk:   'BERSERK — +dmg dealt & received',
+    daze:      'DAZE — may miss attacks',
+    silence:   'SILENCE — skills disabled',
+    confuse:   'CONFUSE — may heal boss',
+    blind:     'BLIND — accuracy reduced',
+    rage:      'RAGE — boss ATK ×1.4',
+    fortify:   'FORTIFY — boss DEF ×1.35',
+    precision: 'PRECISION — boss never misses',
+    evade:     'EVADE — boss may dodge',
+  };
+
   scene.battleLogLines.forEach((lt, i) => {
     const entry = logs[i];
     if (!entry) {
       lt.setText('');
       return;
     }
-    lt.setText(entry.message);
+    let msg = entry.message;
+    if (entry.tone === 'boss' && entry.effectType) {
+      const desc = EFFECT_DESC[entry.effectType];
+      if (desc) msg += `\n↳ ${desc}`;
+    }
+    lt.setText(msg);
     lt.setColor(TONE_COLOR[entry.tone]);
     lt.setAlpha(i === 0 ? 1 : Math.max(0.45, 1 - i * 0.12));
   });

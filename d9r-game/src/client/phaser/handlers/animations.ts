@@ -52,11 +52,11 @@ export function showBossAttackBanner(scene: GameScene, skillName: string, onAfte
     alpha: 1,
     duration: 180,
     onComplete: () => {
-      scene.time.delayedCall(420, () => {
+      scene.time.delayedCall(280, () => {
         scene.tweens.add({
           targets: [bg, text],
           alpha: 0,
-          duration: 220,
+          duration: 180,
           onComplete: () => {
             bg.destroy();
             text.destroy();

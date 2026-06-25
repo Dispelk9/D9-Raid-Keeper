@@ -1,11 +1,12 @@
 import type { GameScene } from '../scenes/GameScene';
 import { persistKeeperSave } from '../../keeper/api';
 import { HEROES, getHeroSkillChoicesForLevel, getNextHeroSkillUnlock } from '../../../shared/game/data/heroes';
-import { getRaidNode } from '../../../shared/game/data/raidBosses';
+import { RAID_NODES, getRaidNode } from '../../../shared/game/data/raidBosses';
 import {
   ENERGY_REGEN_MS, claimDailyReward, createInitialPlayerSave, upgradeHero,
   upgradeHeroWithGem, upgradeLootWithToken, canUpgradeHero,
-  getEffectiveHeroRarity, getHeroProgress, getScaledStats, getUpgradeCost
+  getEffectiveHeroRarity, getHeroProgress, getScaledStats, getUpgradeCost,
+  sellLoot, equipLoot, unequipLoot,
 } from '../../../shared/game/logic/progression';
 import { canUseSkill, getActiveHero, createBattleState } from '../../../shared/game/logic/combat';
 import { fmt, ENERGY_COST } from '../scenes/GameSceneTypes';
@@ -22,6 +23,7 @@ export function handleContinue(scene: GameScene): void {
   scene.battle = null;
   scene.raidRun = null;
   scene.lastRewards = null;
+  scene.mapSelectedLevel = -1;
   scene.setView('map');
   scene.refreshAll();
 }
@@ -33,6 +35,7 @@ export function confirmNewGame(scene: GameScene): void {
   scene.battle = null;
   scene.raidRun = null;
   scene.lastRewards = null;
+  scene.mapSelectedLevel = -1;
   void persistKeeperSave(scene.profile);
   scene.setView('map');
   scene.refreshAll();
@@ -54,6 +57,7 @@ export function openPartySelect(scene: GameScene, raidLevel: number): void {
 
   scene.raidButtonLabel = DEPLOY_LABELS[Math.floor(Math.random() * DEPLOY_LABELS.length)] ?? 'Start Raid';
   scene.selectedRaidLevel = raidLevel;
+  scene.mapSelectedLevel  = raidLevel;  // persist after battle so hero returns here
   const owned = scene.getOwnedHeroIds();
   scene.selectedParty = (scene.profile.party.length > 0 ? scene.profile.party : [])
     .filter((heroId) => owned.has(heroId))
@@ -297,6 +301,45 @@ export function handleLootUpgrade(scene: GameScene, itemId: string): void {
   void persistKeeperSave(result.save);
   scene.showNotification(result.message);
   scene.refreshAll();
+}
+
+export function handleSellLoot(scene: GameScene, itemId: string): void {
+  if (!scene.profile) return;
+  const result = sellLoot(scene.profile, itemId);
+  if (!result.sold) return;
+  scene.profile = result.save;
+  void persistKeeperSave(result.save);
+  scene.showNotification(`Sold for ${result.gold ?? 0} gold.`);
+  scene.refreshAll();
+}
+
+export function handleEquipLoot(scene: GameScene, heroId: string, itemId: string): void {
+  if (!scene.profile) return;
+  const result = equipLoot(scene.profile, heroId, itemId);
+  if (!result.equipped) {
+    scene.showNotification(result.message ?? 'Cannot equip.');
+    return;
+  }
+  scene.profile = result.save;
+  void persistKeeperSave(result.save);
+  scene.refreshAll();
+}
+
+export function handleUnequipLoot(scene: GameScene, itemId: string): void {
+  if (!scene.profile) return;
+  const save = unequipLoot(scene.profile, itemId);
+  scene.profile = save;
+  void persistKeeperSave(save);
+  scene.refreshAll();
+}
+
+export function moveMapSelection(scene: GameScene, dir: number): void {
+  if (!scene.profile) return;
+  const maxLevel = Math.min(scene.profile.raidLevel, RAID_NODES.length);
+  const newLevel = Math.max(1, Math.min(maxLevel, scene.mapSelectedLevel + dir));
+  if (newLevel === scene.mapSelectedLevel) return;
+  scene.mapSelectedLevel = newLevel;
+  scene.refreshMap();
 }
 
 export function handleStartRaid(scene: GameScene): void {

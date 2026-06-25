@@ -125,6 +125,7 @@ export type PlayerSave = {
   heroes: HeroProgress[];
   party: string[];
   inventory: EquipmentItem[];
+  equippedLoot?: Record<string, string[]>; // heroId → [itemId, itemId, itemId] (max 3)
   raidLevel: number;
   totalRaidDamage: number;
   bestRaidDamage: number;
@@ -230,6 +231,8 @@ export type BattleState = {
   status: BattleStatus;
   heroes: BattleHero[];
   boss: RaidBoss;
+  bossList?: RaidBoss[];    // all bosses for hidden floor multi-boss; boss === bossList[activeBossIndex]
+  activeBossIndex?: number; // index into bossList of the currently targeted boss
   activeHeroIndex: number;
   round: number;
   totalDamage: number;

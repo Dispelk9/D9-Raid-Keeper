@@ -9,7 +9,7 @@ import {
   HERO_GEM_UPGRADE_COST, LOOT_BONUS_LEVEL_MAX, LOOT_TOKEN_UPGRADE_COST,
   canUpgradeHero, canUpgradeHeroWithGem, canUpgradeLootWithToken,
   getEffectiveHeroRarity, getHeroProgress, getLootDamageBonus, getScaledStats, getUpgradeCost,
-  isHeroFullyUpgraded
+  isHeroFullyUpgraded, getEquippedHeroId,
 } from '../../../shared/game/logic/progression';
 import { fmt, fmtCompact, ENERGY_COST } from '../scenes/GameSceneTypes';
 
@@ -75,11 +75,17 @@ export function refreshMap(scene: GameScene): void {
 
   const totalFloors = RAID_NODES.length;
 
+  // Auto-initialise to the active floor when first entering map view
+  if (scene.mapSelectedLevel < 1) {
+    scene.mapSelectedLevel = Math.min(scene.profile.raidLevel, totalFloors);
+  }
+
   scene.mapNodeRefs.forEach((ref) => {
     const node       = RAID_NODES.find(n => n.level === ref.level);
     const isHidden   = node?.isHiddenFloor ?? false;
     const completed  = ref.level < scene.profile!.raidLevel;
     const current    = ref.level === Math.min(scene.profile!.raidLevel, totalFloors);
+    const selected   = ref.level === scene.mapSelectedLevel;
     const accessible = isHidden
       ? scene.profile!.raidLevel > 6
       : ref.level <= scene.profile!.raidLevel;
@@ -88,10 +94,11 @@ export function refreshMap(scene: GameScene): void {
     const fill = completed ? 0x14532d : current ? 0x7c2d12 : accessible ? 0x1e293b : 0x0f172a;
     ref.bg.setFillStyle(fill, accessible ? 1 : 0.45);
 
-    // Obstacle ring border
+    // Obstacle ring border — selected (amber) overrides current (orange) overrides completed (green)
     ref.ring.clear();
-    const strokeColor = completed ? 0x22c55e : current ? 0xf97316 : 0x334155;
-    ref.ring.lineStyle(current ? 2 : 1, strokeColor, accessible ? 0.9 : 0.2);
+    const strokeColor = selected ? 0xfbbf24 : completed ? 0x22c55e : current ? 0xf97316 : 0x334155;
+    const strokeW = selected ? 2 : current ? 2 : 1;
+    ref.ring.lineStyle(strokeW, strokeColor, accessible ? 0.9 : 0.2);
     ref.ring.strokeRect(ref.floorX, ref.floorY, ref.floorW, ref.floorH);
 
     // Status icon
@@ -117,21 +124,14 @@ export function refreshMap(scene: GameScene): void {
     }
   });
 
-  // ── Scroll runner so hero is at HERO_SCREEN_X_RATIO of screen ────────────
+  // ── Scroll runner so selected node is visible with hero at HERO_SCREEN_X_RATIO
   if (scene.mapRunnerHeroImg && scene.mapRunnerContainer) {
-    const completedCount = Math.min(scene.profile.raidLevel - 1, totalFloors);
     const { OBS_SPACING, LEAD_MARGIN, HERO_SZ, HERO_SCREEN_X_RATIO } = RUNNER;
-
-    // Hero x position in container space
     const obsX = (i: number) => LEAD_MARGIN + i * OBS_SPACING;
-    let heroXInTrack: number;
-    if (completedCount <= 0) {
-      heroXInTrack = obsX(0) - Math.round(OBS_SPACING * 0.55);
-    } else if (completedCount >= totalFloors) {
-      heroXInTrack = obsX(totalFloors - 1) + Math.round(OBS_SPACING * 0.55);
-    } else {
-      heroXInTrack = Math.round((obsX(completedCount - 1) + obsX(completedCount)) / 2);
-    }
+
+    // Hero stands at the selected node's x position
+    const selectedIdx = Math.max(0, Math.min(scene.mapSelectedLevel - 1, totalFloors - 1));
+    const heroXInTrack = obsX(selectedIdx);
 
     scene.mapRunnerHeroImg.setY((scene as any)._runnerGroundY - HERO_SZ / 2);
     scene.tweens.add({
@@ -158,6 +158,24 @@ export function refreshMap(scene: GameScene): void {
     scene.mapRunnerHeroImg.setTexture(heroConfig.key).setDisplaySize(HERO_SZ, HERO_SZ);
     scene.setHeroPose(scene.mapRunnerHeroImg, firstHeroId, 'idle');
   }
+
+  // ── Update arrow button states ────────────────────────────────────────────
+  const maxSelectable = Math.min(scene.profile.raidLevel, totalFloors);
+  const atLeft  = scene.mapSelectedLevel <= 1;
+  const atRight = scene.mapSelectedLevel >= maxSelectable;
+
+  if (scene.mapArrowLeftBg) {
+    scene.mapArrowLeftBg.setAlpha(atLeft ? 0.25 : 0.8);
+    if (atLeft) scene.mapArrowLeftBg.disableInteractive();
+    else scene.mapArrowLeftBg.setInteractive({ useHandCursor: true });
+  }
+  if (scene.mapArrowLeftText) scene.mapArrowLeftText.setAlpha(atLeft ? 0.25 : 1);
+  if (scene.mapArrowRightBg) {
+    scene.mapArrowRightBg.setAlpha(atRight ? 0.25 : 0.8);
+    if (atRight) scene.mapArrowRightBg.disableInteractive();
+    else scene.mapArrowRightBg.setInteractive({ useHandCursor: true });
+  }
+  if (scene.mapArrowRightText) scene.mapArrowRightText.setAlpha(atRight ? 0.25 : 1);
 }
 
 export function refreshPartySelect(scene: GameScene): void {
@@ -360,87 +378,122 @@ export function refreshHeroes(scene: GameScene): void {
 
 export function refreshLoot(scene: GameScene): void {
   if (!scene.profile) return;
+  const totalBonus = getLootDamageBonus(scene.profile); // legacy total for display
   const vals = [
     fmt(scene.profile.bestRaidDamage),
     fmt(scene.profile.totalRaidDamage),
-    `+${fmt(getLootDamageBonus(scene.profile))}`,
+    `+${fmt(totalBonus)}`,
     String(scene.profile.inventory.length),
   ];
   vals.forEach((v, i) => scene.lootStatTexts[i]?.setText(v));
 
   scene.lootItemsGroup.removeAll(true);
   const items = scene.profile.inventory.slice(-8).reverse();
+
   items.forEach((item, i) => {
-    const rowH = 54;
+    const rowH = 64;
     const iy = i * rowH;
+    const equippedHeroId = getEquippedHeroId(scene.profile!, item.id);
+    const equippedHero = equippedHeroId
+      ? HEROES.find(h => h.id === equippedHeroId)
+      : null;
+
     const ibg = scene.add.graphics();
-    ibg.fillStyle(0xf5f5f4);
+    ibg.fillStyle(equippedHeroId ? 0xf0f9ff : 0xf5f5f4);
     ibg.fillRoundedRect(PAD, iy + PAD, W - PAD * 2, rowH - 2, 6);
+    if (equippedHeroId) {
+      ibg.lineStyle(1, 0x0ea5e9, 0.5);
+      ibg.strokeRoundedRect(PAD, iy + PAD, W - PAD * 2, rowH - 2, 6);
+    }
+
     const iconT = scene.add.text(PAD + 6, iy + PAD + rowH / 2 - 2, getEquipmentIcon(item.id), {
-      fontSize: '18px',
-      fontFamily: FONT.emoji,
+      fontSize: '18px', fontFamily: FONT.emoji,
     }).setOrigin(0, 0.5);
+
     const nameT = scene.add.text(PAD + 28, iy + PAD + 5, item.name, {
-      fontSize: '11px',
-      fontStyle: 'bold',
-      fontFamily: FONT.sans,
-      color: '#18181b',
+      fontSize: '11px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#18181b',
     });
+
     const rarityColor = '#' + (RARITY_COLOR[item.rarity] ?? COLORS.rarityCommon).toString(16).padStart(6, '0');
     const rarityT = scene.add.text(PAD + 28, iy + PAD + 19, item.rarity, {
-      fontSize: '9px',
-      fontStyle: 'bold',
-      fontFamily: FONT.sans,
-      color: rarityColor,
+      fontSize: '9px', fontStyle: 'bold', fontFamily: FONT.sans, color: rarityColor,
     });
+
     const bonusLevel = item.bonusLevel ?? 0;
-    const bonusLabel =
-      `DMG +${item.bonus}` +
-      (bonusLevel ? `  +${bonusLevel}/${LOOT_BONUS_LEVEL_MAX}` : '');
-    const bonusT = scene.add.text(
-      PAD + 28,
-      iy + PAD + 31,
-      bonusLabel,
-      {
-        fontSize: '9px',
-        fontFamily: FONT.sans,
-        color: '#71717a',
-      }
+    const bonusLabel = `DMG +${item.bonus}` + (bonusLevel ? `  +${bonusLevel}/${LOOT_BONUS_LEVEL_MAX}` : '');
+    const bonusT = scene.add.text(PAD + 28, iy + PAD + 31, bonusLabel, {
+      fontSize: '9px', fontFamily: FONT.sans, color: '#71717a',
+    });
+
+    // Equip status text
+    const equipStatusT = scene.add.text(PAD + 28, iy + PAD + 42,
+      equippedHero ? `⚔ ${equippedHero.name}` : '',
+      { fontSize: '8px', fontFamily: FONT.sans, color: '#0369a1' }
     );
+
+    // 3 buttons: Upgrade | Sell | Equip/Unequip
+    const btnAreaX = W - PAD - 200;
+    const btnW = 60;
+    const btnY = iy + PAD + rowH - 16;
+    const capturedId = item.id;
+    const capturedHeroId = equippedHeroId;
+
+    // Upgrade button
     const canUpgrade = canUpgradeLootWithToken(scene.profile!, item.id);
-    const isMax = (item.bonusLevel ?? 0) >= LOOT_BONUS_LEVEL_MAX;
-    const upgBtnW = 70;
-    const upgBtnX = W - PAD - upgBtnW / 2;
-    const upgBtnY = iy + PAD + rowH / 2 - 2;
+    const isMax = bonusLevel >= LOOT_BONUS_LEVEL_MAX;
     const upgBg = scene.add
-      .rectangle(upgBtnX, upgBtnY, upgBtnW, 22,
+      .rectangle(btnAreaX + btnW / 2, btnY, btnW, 20,
         isMax ? COLORS.btnDisabled : canUpgrade ? 0x0f766e : COLORS.btnDisabled)
       .setInteractive({ useHandCursor: canUpgrade });
-    const upgText = scene.add
-      .text(upgBtnX, upgBtnY,
-        isMax ? 'MAX' : `+10  ${LOOT_TOKEN_UPGRADE_COST}T`, {
-        fontSize: '9px',
-        fontStyle: 'bold',
-        fontFamily: FONT.sans,
-        color: '#ffffff',
-      })
-      .setOrigin(0.5);
-    if (canUpgrade) {
-      const capturedId = item.id;
-      upgBg.on('pointerdown', () => scene.handleLootUpgrade(capturedId));
+    const upgText = scene.add.text(btnAreaX + btnW / 2, btnY,
+      isMax ? 'MAX' : `⬆ ${LOOT_TOKEN_UPGRADE_COST}T`, {
+        fontSize: '8px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#ffffff',
+      }).setOrigin(0.5);
+    if (canUpgrade) upgBg.on('pointerdown', () => scene.handleLootUpgrade(capturedId));
+
+    // Sell button
+    const sellX = btnAreaX + btnW + 4 + btnW / 2;
+    const sellBg = scene.add
+      .rectangle(sellX, btnY, btnW, 20, 0xdc2626)
+      .setInteractive({ useHandCursor: true });
+    const sellText = scene.add.text(sellX, btnY, '💰 Sell', {
+      fontSize: '8px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#ffffff',
+    }).setOrigin(0.5);
+    sellBg.on('pointerdown', () => scene.handleSellLoot(capturedId));
+
+    // Equip/Unequip button — equips to first party member with a free slot
+    const equipX = btnAreaX + (btnW + 4) * 2 + btnW / 2;
+    const isEquipped = Boolean(capturedHeroId);
+    const equipBg = scene.add
+      .rectangle(equipX, btnY, btnW, 20, isEquipped ? 0x0369a1 : 0x374151)
+      .setInteractive({ useHandCursor: true });
+    const equipText = scene.add.text(equipX, btnY, isEquipped ? '✕ Unequip' : '⊕ Equip', {
+      fontSize: '8px', fontStyle: 'bold', fontFamily: FONT.sans, color: '#ffffff',
+    }).setOrigin(0.5);
+    if (isEquipped) {
+      equipBg.on('pointerdown', () => scene.handleUnequipLoot(capturedId));
+    } else {
+      equipBg.on('pointerdown', () => {
+        if (!scene.profile) return;
+        const party = scene.profile.party.slice(0, 5);
+        const equipped = scene.profile.equippedLoot ?? {};
+        const target = party.find(hId => (equipped[hId] ?? []).length < 3);
+        if (!target) { scene.showNotification('All heroes have 3 items equipped.'); return; }
+        scene.handleEquipLoot(target, capturedId);
+      });
     }
-    scene.lootItemsGroup.add([ibg, iconT, nameT, rarityT, bonusT, upgBg, upgText]);
+
+    scene.lootItemsGroup.add([
+      ibg, iconT, nameT, rarityT, bonusT, equipStatusT,
+      upgBg, upgText, sellBg, sellText, equipBg, equipText,
+    ]);
   });
 
   if (items.length === 0) {
     scene.lootItemsGroup.add(
-      scene.add
-        .text(W / 2, 50, 'Clear raids to earn gear.', {
-          fontSize: '13px',
-          fontFamily: FONT.sans,
-          color: '#a1a1aa',
-        })
-        .setOrigin(0.5)
+      scene.add.text(W / 2, 50, 'Clear raids to earn gear.', {
+        fontSize: '13px', fontFamily: FONT.sans, color: '#a1a1aa',
+      }).setOrigin(0.5)
     );
   }
 }
