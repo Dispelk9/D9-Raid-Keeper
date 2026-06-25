@@ -141,6 +141,7 @@ export type RaidNode = {
   summary: string;
   minBattles: number;
   maxBattles: number;
+  isHiddenFloor?: boolean;
 };
 
 export type RaidBossTemplate = {
@@ -211,6 +212,7 @@ export type RaidBoss = {
   attackName?: string;
   specialSkill?: BossSpecialSkill;
   specialSkills?: BossSpecialSkill[];
+  sideSprites?: Array<{ spriteKey: string; spriteFrame?: number }>;
 };
 
 export type BattleLogEntry = {

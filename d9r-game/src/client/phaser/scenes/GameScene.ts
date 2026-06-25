@@ -48,6 +48,7 @@ export class GameScene extends Phaser.Scene {
   bossTurnAnimating = false;
   raidStatus: RaidStatus | null = null;
   pendingResultShow = false;
+  raidButtonLabel = 'Start Raid';
 
   // Energy regen timer
   energyUpdateAccum = 0;
@@ -57,13 +58,22 @@ export class GameScene extends Phaser.Scene {
   // Result overlay loot section
   resultLootGroup!: Phaser.GameObjects.Container;
 
-  // Map scroll state
+  // Map scroll state (legacy - kept for compat)
   mapScrollMin = 0;
   mapScrollMax = 0;
   mapDragStartPtrY = 0;
   mapDragStartContainerY = 0;
   mapIsDragging = false;
   mapDraggedPx = 0;
+
+  // Carousel state
+  mapCarouselContainer!: Phaser.GameObjects.Container;
+  mapCarouselIndex = 0;
+  mapCarouselCardW = 0;
+  mapCarouselCardSpacing = 0;
+  mapCarouselDragStartX = 0;
+  mapCarouselDragStartContainerX = 0;
+  mapCarouselIsDragging = false;
 
   // Community raid panel (on map view)
   raidPanelBossText!: Phaser.GameObjects.Text;
@@ -90,6 +100,9 @@ export class GameScene extends Phaser.Scene {
 
   // Header
   raidLvText!: Phaser.GameObjects.Text;
+
+  // Multi-boss side sprites (hidden floor formation)
+  sideBossImages: Phaser.GameObjects.Image[] = [];
 
   // Boss
   stageBg!: Phaser.GameObjects.Image;

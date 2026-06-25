@@ -10,6 +10,8 @@ import {
   getRaidNode,
   MINI_BOSS_SECRETARY_KEY,
   MINI_BOSS_SECURITY_KEY,
+  RAID_BOSSES,
+  BOSS_SPRITE_FRAMES,
 } from '../data/raidBosses';
 import {
   getHeroProgress,
@@ -70,6 +72,12 @@ const buildBattleHero = (
   };
 };
 
+// Hidden floor encounter definitions: [left, right, center/back]
+const HIDDEN_FLOOR_ENCOUNTERS: [string, string, string][] = [
+  ['product-owner', 'project-manager', 'tech-lead'],
+  ['engineering-manager', 'director-of-engineering', 'cco'],
+];
+
 const createRaidBoss = (
   save: PlayerSave,
   options: CreateBattleStateOptions = {}
@@ -79,6 +87,52 @@ const createRaidBoss = (
   const encounterIndex = Math.max(1, options.encounterIndex ?? 1);
   const encounterCount = Math.max(1, options.encounterCount ?? 1);
   const node = getRaidNode(raidLevel);
+
+  // ── Hidden Floor (level 7): multi-boss formation ─────────────────────────
+  if (node.isHiddenFloor) {
+    const encBossIds = HIDDEN_FLOOR_ENCOUNTERS[encounterIndex - 1] ?? HIDDEN_FLOOR_ENCOUNTERS[1]!;
+    const [leftId, rightId, centerId] = encBossIds;
+    const leftTemplate   = RAID_BOSSES.find(b => b.id === leftId)   ?? RAID_BOSSES[0]!;
+    const rightTemplate  = RAID_BOSSES.find(b => b.id === rightId)  ?? RAID_BOSSES[1]!;
+    const centerTemplate = RAID_BOSSES.find(b => b.id === centerId) ?? RAID_BOSSES[2]!;
+
+    const combinedHp = Math.round(
+      (leftTemplate.stats.hp + rightTemplate.stats.hp + centerTemplate.stats.hp + powerBonus) *
+      1.45
+    );
+    const specialSkills =
+      centerTemplate.specialSkills ??
+      (centerTemplate.specialSkill ? [centerTemplate.specialSkill] : []);
+
+    return {
+      id: `hidden-floor-enc${encounterIndex}`,
+      name: encounterIndex === 1 ? 'Department Heads' : 'The C-Suite',
+      title: encounterIndex === 1
+        ? `Board Formation · ${encounterIndex}/${encounterCount}`
+        : `Executive Formation · ${encounterIndex}/${encounterCount}`,
+      icon: centerTemplate.icon,
+      spriteKey: 'snoo-bosses-right',
+      spriteFrame: BOSS_SPRITE_FRAMES[centerId] ?? 5,
+      maxHp: combinedHp,
+      hp: combinedHp,
+      atk: Math.round((leftTemplate.stats.atk + rightTemplate.stats.atk + centerTemplate.stats.atk) / 2.2),
+      def: Math.round((leftTemplate.stats.def + centerTemplate.stats.def) / 1.8),
+      mag: Math.round((leftTemplate.stats.mag + centerTemplate.stats.mag) / 1.8),
+      res: Math.round((leftTemplate.stats.res + centerTemplate.stats.res) / 1.8),
+      spd: centerTemplate.stats.spd,
+      countdown: centerTemplate.stats.countdown,
+      statusEffects: [],
+      isElite: true,
+      attackName: centerTemplate.attackName ?? 'Formation Strike',
+      ...(specialSkills.length > 0 ? { specialSkill: specialSkills[0]!, specialSkills } : {}),
+      sideSprites: [
+        { spriteKey: 'snoo-bosses-right', spriteFrame: BOSS_SPRITE_FRAMES[leftId] ?? 0 },
+        { spriteKey: 'snoo-bosses-right', spriteFrame: BOSS_SPRITE_FRAMES[rightId] ?? 1 },
+      ],
+    };
+  }
+
+  // ── Normal boss ───────────────────────────────────────────────────────────
   const bossTemplate = getBossTemplate(options.bossId ?? node.bossId);
   const specialSkills =
     bossTemplate.specialSkills ??

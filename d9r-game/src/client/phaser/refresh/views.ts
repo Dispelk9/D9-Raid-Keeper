@@ -2,6 +2,7 @@ import type { GameScene } from '../scenes/GameScene';
 import { COLORS, FONT, H, W, PAD, RARITY_COLOR } from '../constants';
 import { HEROES, getHeroSkillChoicesForLevel } from '../../../shared/game/data/heroes';
 import { RAID_NODES, getBossAppearance, getRaidNode } from '../../../shared/game/data/raidBosses';
+import { snapCarouselTo } from '../builders/mapView';
 import {
   HERO_GEM_UPGRADE_COST, LOOT_BONUS_LEVEL_MAX, LOOT_TOKEN_UPGRADE_COST,
   canUpgradeHero, canUpgradeHeroWithGem, canUpgradeLootWithToken,
@@ -70,28 +71,86 @@ export function refreshRaidPanel(scene: GameScene): void {
 export function refreshMap(scene: GameScene): void {
   if (!scene.profile) return;
 
+  const totalFloors = RAID_NODES.length;
   scene.mapNodeRefs.forEach((ref) => {
+    const node = RAID_NODES.find(n => n.level === ref.level);
+    const isHidden = node?.isHiddenFloor ?? false;
     const completed = ref.level < scene.profile!.raidLevel;
-    const unlocked = ref.level <= scene.profile!.raidLevel;
-    const current = ref.level === Math.min(scene.profile!.raidLevel, RAID_NODES.length);
-    const fill = completed ? 0xdcfce7 : unlocked ? 0xffffff : 0xe5e7eb;
-    const stroke = completed ? 0x16a34a : current ? 0xf97316 : 0x94a3b8;
+    const current = ref.level === Math.min(scene.profile!.raidLevel, totalFloors);
+    const accessible = isHidden
+      ? scene.profile!.raidLevel > 6
+      : ref.level <= scene.profile!.raidLevel;
 
-    ref.bg.setFillStyle(fill, unlocked ? 1 : 0.72);
+    const fill = completed
+      ? 0x14532d
+      : current
+        ? 0x1e3a5f
+        : accessible
+          ? 0x1e293b
+          : isHidden
+            ? 0x120f20
+            : 0x1a1a2e;
+
+    ref.bg.setFillStyle(fill, accessible ? 1 : 0.75);
+
     ref.ring.clear();
-    ref.ring.lineStyle(current ? 4 : 2, stroke, unlocked ? 1 : 0.45);
-    ref.ring.strokeCircle(ref.bg.x, ref.bg.y, current ? 39 : 36);
-    ref.label.setAlpha(unlocked ? 1 : 0.35);
-    ref.subLabel
-      .setText(completed ? '✓ Done' : unlocked ? ref.name : '🔒')
-      .setColor(completed ? '#15803d' : unlocked ? '#374151' : '#94a3b8');
+    const strokeColor = completed ? 0x22c55e : current ? 0xf97316 : accessible ? 0x475569 : 0x2d2d44;
+    ref.ring.lineStyle(current ? 3 : 2, strokeColor, accessible ? 1 : 0.4);
+    ref.ring.strokeRoundedRect(ref.floorX, ref.floorY, ref.floorW, ref.floorH, 0);
 
-    if (unlocked) {
+    ref.label.setAlpha(accessible ? 1 : 0.5);
+    ref.label.setText(
+      completed ? '✓' : current ? '▶' : accessible ? '·' : isHidden ? '?' : '🔒'
+    );
+
+    ref.subLabel
+      .setText(
+        isHidden && !accessible ? 'Executive Suite ???'
+        : completed ? ref.name
+        : accessible ? ref.name
+        : 'Locked'
+      )
+      .setColor(
+        completed ? '#22c55e'
+        : current   ? '#fb923c'
+        : accessible? '#cbd5e1'
+        : '#475569'
+      );
+
+    // Update deploy button on card
+    const btnBg  = (scene as any)[`_cardSelectBtnBg_${ref.level}`]  as Phaser.GameObjects.Rectangle | undefined;
+    const btnTxt = (scene as any)[`_cardSelectBtnTxt_${ref.level}`] as Phaser.GameObjects.Text | undefined;
+    if (btnBg && btnTxt) {
+      if (accessible) {
+        btnBg.setFillStyle(current ? 0xf97316 : COLORS.ink);
+        btnBg.setInteractive({ useHandCursor: true });
+        btnTxt.setText(current ? `▶ Deploy Floor ${ref.level}` : `Floor ${ref.level} — Deploy`);
+      } else {
+        btnBg.setFillStyle(COLORS.btnDisabled);
+        btnBg.disableInteractive();
+        btnTxt.setText(isHidden ? '🔒 Beat all 6 floors first' : '🔒 Locked');
+      }
+    }
+
+    if (accessible) {
       ref.hit.setInteractive({ useHandCursor: true });
     } else {
       ref.hit.disableInteractive();
     }
   });
+
+  // Snap carousel to lowest unlocked floor (current raid floor, clamped to array bounds)
+  const targetLevel = Math.min(scene.profile!.raidLevel, RAID_NODES.length);
+  const targetIdx   = RAID_NODES.findIndex(n => n.level === targetLevel);
+  if (targetIdx >= 0 && scene.mapCarouselContainer) {
+    snapCarouselTo(
+      scene,
+      scene.mapCarouselContainer,
+      targetIdx,
+      scene.mapCarouselCardW,
+      scene.mapCarouselCardSpacing
+    );
+  }
 }
 
 export function refreshPartySelect(scene: GameScene): void {
@@ -143,8 +202,8 @@ export function refreshPartySelect(scene: GameScene): void {
     scene.selectedParty.length < 5
       ? `Choose ${5 - scene.selectedParty.length} more`
       : scene.profile.energy < ENERGY_COST
-        ? `Need ${ENERGY_COST} energy`
-        : `Start Raid · ${ENERGY_COST} energy`
+        ? `⚡ Need ${ENERGY_COST} energy`
+        : `${scene.raidButtonLabel} · ⚡${ENERGY_COST}`
   );
   if (ready) {
     scene.partyStartBg.setInteractive({ useHandCursor: true });
@@ -305,12 +364,12 @@ export function refreshLoot(scene: GameScene): void {
   scene.lootItemsGroup.removeAll(true);
   const items = scene.profile.inventory.slice(-8).reverse();
   items.forEach((item, i) => {
-    const rowH = 46;
+    const rowH = 54;
     const iy = i * rowH;
     const ibg = scene.add.graphics();
     ibg.fillStyle(0xf5f5f4);
     ibg.fillRoundedRect(PAD, iy + PAD, W - PAD * 2, rowH - 2, 6);
-    const iconT = scene.add.text(PAD + 6, iy + PAD + rowH / 2 - 4, getEquipmentIcon(item.id), {
+    const iconT = scene.add.text(PAD + 6, iy + PAD + rowH / 2 - 2, getEquipmentIcon(item.id), {
       fontSize: '18px',
       fontFamily: FONT.emoji,
     }).setOrigin(0, 0.5);
@@ -320,16 +379,23 @@ export function refreshLoot(scene: GameScene): void {
       fontFamily: FONT.sans,
       color: '#18181b',
     });
+    const rarityColor = '#' + (RARITY_COLOR[item.rarity] ?? COLORS.rarityCommon).toString(16).padStart(6, '0');
+    const rarityT = scene.add.text(PAD + 28, iy + PAD + 19, item.rarity, {
+      fontSize: '9px',
+      fontStyle: 'bold',
+      fontFamily: FONT.sans,
+      color: rarityColor,
+    });
     const bonusLevel = item.bonusLevel ?? 0;
     const bonusLabel =
       `DMG +${item.bonus}` +
-      (bonusLevel ? `  Upgrade +${bonusLevel}/${LOOT_BONUS_LEVEL_MAX}` : '');
+      (bonusLevel ? `  +${bonusLevel}/${LOOT_BONUS_LEVEL_MAX}` : '');
     const bonusT = scene.add.text(
       PAD + 28,
-      iy + PAD + 20,
+      iy + PAD + 31,
       bonusLabel,
       {
-        fontSize: '10px',
+        fontSize: '9px',
         fontFamily: FONT.sans,
         color: '#71717a',
       }
@@ -338,7 +404,7 @@ export function refreshLoot(scene: GameScene): void {
     const isMax = (item.bonusLevel ?? 0) >= LOOT_BONUS_LEVEL_MAX;
     const upgBtnW = 70;
     const upgBtnX = W - PAD - upgBtnW / 2;
-    const upgBtnY = iy + PAD + rowH / 2 - 4;
+    const upgBtnY = iy + PAD + rowH / 2 - 2;
     const upgBg = scene.add
       .rectangle(upgBtnX, upgBtnY, upgBtnW, 22,
         isMax ? COLORS.btnDisabled : canUpgrade ? 0x0f766e : COLORS.btnDisabled)
@@ -356,7 +422,7 @@ export function refreshLoot(scene: GameScene): void {
       const capturedId = item.id;
       upgBg.on('pointerdown', () => scene.handleLootUpgrade(capturedId));
     }
-    scene.lootItemsGroup.add([ibg, iconT, nameT, bonusT, upgBg, upgText]);
+    scene.lootItemsGroup.add([ibg, iconT, nameT, rarityT, bonusT, upgBg, upgText]);
   });
 
   if (items.length === 0) {

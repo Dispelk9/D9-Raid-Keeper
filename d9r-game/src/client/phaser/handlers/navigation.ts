@@ -38,6 +38,13 @@ export function confirmNewGame(scene: GameScene): void {
   scene.refreshAll();
 }
 
+const DEPLOY_LABELS = [
+  'Start Refinement',
+  'Join Daily Standup',
+  'Start Alignment Sync',
+  'Join Quick Sync',
+];
+
 export function openPartySelect(scene: GameScene, raidLevel: number): void {
   if (!scene.profile) return;
   if (raidLevel > scene.profile.raidLevel) {
@@ -45,6 +52,7 @@ export function openPartySelect(scene: GameScene, raidLevel: number): void {
     return;
   }
 
+  scene.raidButtonLabel = DEPLOY_LABELS[Math.floor(Math.random() * DEPLOY_LABELS.length)] ?? 'Start Raid';
   scene.selectedRaidLevel = raidLevel;
   const owned = scene.getOwnedHeroIds();
   scene.selectedParty = (scene.profile.party.length > 0 ? scene.profile.party : [])

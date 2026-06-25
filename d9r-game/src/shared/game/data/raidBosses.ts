@@ -19,6 +19,16 @@ export const RAID_BOSSES: RaidBossTemplate[] = [
   cco,
 ];
 
+// Sprite frames for the snoo-bosses-right sheet (used for side-boss formation)
+export const BOSS_SPRITE_FRAMES: Record<string, number> = {
+  'product-owner':          0,
+  'project-manager':        1,
+  'tech-lead':              2,
+  'engineering-manager':    3,
+  'director-of-engineering':4,
+  'cco':                    5,
+};
+
 export const RAID_NODES: RaidNode[] = [
   {
     id: 'node-product-owner',
@@ -79,6 +89,17 @@ export const RAID_NODES: RaidNode[] = [
     summary: 'Face the layoff algorithm and free thousands of future employees.',
     minBattles: 4,
     maxBattles: 5,
+  },
+  {
+    id: 'node-hidden-floor',
+    level: 7,
+    bossId: cco.id,
+    name: 'Executive Suite',
+    title: 'Final Stand',
+    summary: 'The entire board has assembled. Face them all at once to end this.',
+    minBattles: 2,
+    maxBattles: 2,
+    isHiddenFloor: true,
   },
 ];
 

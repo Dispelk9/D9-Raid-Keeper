@@ -8,6 +8,7 @@ export function refreshBoss(scene: GameScene): void {
   if (!scene.battle) return;
   const { boss } = scene.battle;
   const elite = boss.isElite ?? false;
+  const isMultiBoss = (boss.sideSprites?.length ?? 0) > 0;
 
   scene.bossTitleText
     .setText(
@@ -20,21 +21,49 @@ export function refreshBoss(scene: GameScene): void {
   scene.bossHpFill.scaleX = clamp(boss.hp / boss.maxHp);
   scene.bossAura.setFillStyle(elite ? 0xfbbf24 : COLORS.boss, 0.22);
 
-  // Reset position and alpha that animateBossDefeat() permanently alters
-  scene.bossImage.setPosition(scene.bossCX, scene.bossCY).setAlpha(1);
-  scene.bossAura.setPosition(scene.bossCX, scene.bossCY).setAlpha(1);
+  if (isMultiBoss) {
+    // Center boss: pushed back (higher up, smaller) to show depth
+    const centerX = scene.bossCX;
+    const centerY = scene.bossCY - 18;
+    scene.bossImage.setPosition(centerX, centerY).setAlpha(1);
+    scene.bossAura.setPosition(centerX, centerY).setAlpha(1);
 
-  if (scene.textures.exists(boss.spriteKey)) {
-    const requestedFrame = boss.spriteFrame ?? 0;
-    const frame = scene.textures.getFrame(boss.spriteKey, requestedFrame)
-      ? requestedFrame
-      : 0;
-    scene.bossImage
-      .setTexture(boss.spriteKey, frame)
-      .setDisplaySize(112, 112)
-      .setVisible(true);
+    if (scene.textures.exists(boss.spriteKey)) {
+      const requestedFrame = boss.spriteFrame ?? 0;
+      const frame = scene.textures.getFrame(boss.spriteKey, requestedFrame) ? requestedFrame : 0;
+      scene.bossImage.setTexture(boss.spriteKey, frame).setDisplaySize(88, 88).setVisible(true);
+    }
+
+    // Flanking side bosses
+    boss.sideSprites!.forEach((sprite, idx) => {
+      const img = scene.sideBossImages[idx];
+      if (!img) return;
+      const offsetX = idx === 0 ? -48 : 48;
+      const sideY   = scene.bossCY + 14;
+      img.setPosition(scene.bossCX + offsetX, sideY);
+      if (scene.textures.exists(sprite.spriteKey)) {
+        const f = sprite.spriteFrame ?? 0;
+        const frame = scene.textures.getFrame(sprite.spriteKey, f) ? f : 0;
+        img.setTexture(sprite.spriteKey, frame).setDisplaySize(84, 84).setVisible(true).setAlpha(1);
+      } else {
+        img.setVisible(false);
+      }
+    });
   } else {
-    scene.bossImage.setVisible(false);
+    // Single boss
+    scene.bossImage.setPosition(scene.bossCX, scene.bossCY).setAlpha(1);
+    scene.bossAura.setPosition(scene.bossCX, scene.bossCY).setAlpha(1);
+
+    if (scene.textures.exists(boss.spriteKey)) {
+      const requestedFrame = boss.spriteFrame ?? 0;
+      const frame = scene.textures.getFrame(boss.spriteKey, requestedFrame) ? requestedFrame : 0;
+      scene.bossImage.setTexture(boss.spriteKey, frame).setDisplaySize(112, 112).setVisible(true);
+    } else {
+      scene.bossImage.setVisible(false);
+    }
+
+    // Hide side bosses when not a multi-boss encounter
+    scene.sideBossImages.forEach(img => img.setVisible(false));
   }
 }
 

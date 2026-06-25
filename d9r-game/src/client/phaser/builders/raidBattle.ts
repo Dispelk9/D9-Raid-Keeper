@@ -25,6 +25,7 @@ export function buildRaidView(scene: GameScene): void {
   buildBattleField(scene);
   buildBossInfoBar(scene);
   buildBossSprite(scene);
+  buildSideBossSprites(scene);
   buildHeroSlotsUI(scene);
   buildActionButtons(scene);
   buildActiveHighlight(scene);
@@ -139,6 +140,31 @@ export function buildBossSprite(scene: GameScene): void {
     .setVisible(false);
 
   scene.raidGroup.add([scene.bossAura, scene.bossImage]);
+}
+
+export function buildSideBossSprites(scene: GameScene): void {
+  // Two flanking boss images for the hidden floor multi-boss formation.
+  // Side bosses are drawn AFTER the center boss so they render on top (closer).
+  const contentY = STAGE_Y + INFO_BAR_H + BANNER_ZONE_H + PAD;
+  const contentH = STAGE_H - INFO_BAR_H - BANNER_ZONE_H - PAD - ACTION_H - PAD * 2;
+  const bossCY   = contentY + Math.floor(contentH / 2);
+
+  scene.sideBossImages = [];
+
+  const leftImg = scene.add
+    .image(scene.bossCX - 46, bossCY + 14, SNOO_BOSS_RIGHT_KEY, 0)
+    .setDisplaySize(84, 84)
+    .setOrigin(0.5)
+    .setVisible(false);
+
+  const rightImg = scene.add
+    .image(scene.bossCX + 46, bossCY + 14, SNOO_BOSS_RIGHT_KEY, 0)
+    .setDisplaySize(84, 84)
+    .setOrigin(0.5)
+    .setVisible(false);
+
+  scene.sideBossImages.push(leftImg, rightImg);
+  scene.raidGroup.add([leftImg, rightImg]);
 }
 
 export function buildHeroSlotsUI(scene: GameScene): void {

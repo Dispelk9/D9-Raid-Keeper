@@ -225,7 +225,7 @@ export const createBattleRewards = (
     gems: victory
       ? 12 + battlesCleared * 4
       : partialGemReward,
-    energy: victory ? 8 : Math.max(2, Math.round(2 + clearRatio * 5)),
+    energy: 0,
     raidTokens:
       Math.max(1, Math.floor(totalDamage / 140)) +
       (victory ? 5 + battlesCleared : battlesCleared),

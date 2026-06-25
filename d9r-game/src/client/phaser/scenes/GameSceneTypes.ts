@@ -36,11 +36,15 @@ export type HeroCardRef = {
 export type MapNodeRef = {
   level: number;
   name: string;
-  bg: Phaser.GameObjects.Arc;
+  bg: Phaser.GameObjects.Rectangle;
   ring: Phaser.GameObjects.Graphics;
   label: Phaser.GameObjects.Text;
   subLabel: Phaser.GameObjects.Text;
-  hit: Phaser.GameObjects.Arc;
+  hit: Phaser.GameObjects.Rectangle;
+  floorX: number;
+  floorY: number;
+  floorW: number;
+  floorH: number;
 };
 
 export type PartyHeroRef = {

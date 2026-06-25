@@ -108,8 +108,9 @@ export function showHeroSkillBanner(scene: GameScene, skillName: string, onCompl
 }
 
 export function animateBossDefeat(scene: GameScene): void {
+  const defeatTargets: Phaser.GameObjects.GameObject[] = [scene.bossImage, scene.bossAura, ...scene.sideBossImages];
   scene.tweens.add({
-    targets: [scene.bossImage, scene.bossAura],
+    targets: defeatTargets,
     alpha: 0,
     y: `+=${60}`,
     duration: 1800,
