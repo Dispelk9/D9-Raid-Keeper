@@ -1,7 +1,7 @@
 import type { HeroTemplate } from '../../types';
 
 export const qaTester: HeroTemplate = {
-  id: 'upvote-ranger',
+  id: 'qa-tester',
   name: 'QA Tester',
   title: 'Bug Hunter',
   role: 'QA',

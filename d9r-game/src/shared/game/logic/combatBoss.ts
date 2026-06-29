@@ -11,7 +11,6 @@ import {
   getMissChance,
   getCritChance,
   getDamage,
-  type BattleCombatant,
 } from './combatCalcs';
 import { addStatusEffect, tickBattleEffects } from './combatEffects';
 
@@ -111,7 +110,8 @@ const resolveEliteBossSkill = (
 
   const heroes = state.heroes.map((hero) => {
     if (!targets.some((t) => t?.id === hero.id)) return hero;
-    const damage = Math.max(4, Math.round(baseDmg - hero.def * 0.2));
+    const rawSpecial = Math.max(4, Math.round(baseDmg - hero.def * 0.2));
+    const damage = hero.isDefending ? Math.round(rawSpecial / 2) : rawSpecial;
     targetHeroIds.push(hero.id);
     return {
       ...hero,
@@ -159,7 +159,8 @@ const resolveSingleBossAttack = (state: BattleState): BattleState => {
       if (missed) { misses += 1; return hero; }
       const critical = Math.random() < getCritChance(state.boss, BOSS_SPECIAL_SKILL);
       if (critical) crits += 1;
-      const finalDamage = Math.round(Math.max(8, damage - hero.res * 0.25) * (critical ? 1.45 : 1));
+      const rawAoe = Math.round(Math.max(8, damage - hero.res * 0.25) * (critical ? 1.45 : 1));
+      const finalDamage = hero.isDefending ? Math.round(rawAoe / 2) : rawAoe;
       targetHeroIds.push(hero.id);
       return { ...hero, hp: Math.max(0, hero.hp - finalDamage) };
     });
@@ -196,7 +197,8 @@ const resolveSingleBossAttack = (state: BattleState): BattleState => {
   const missed = Math.random() < getMissChance(state.boss, target, BOSS_ATTACK_SKILL);
   const critical = !missed && Math.random() < getCritChance(state.boss, BOSS_ATTACK_SKILL);
   const baseDamage = missed ? 0 : getDamage(state.boss.atk * bossAtkMult, target.def, BOSS_ATTACK_SKILL.power, 8);
-  const damage = critical ? Math.round(baseDamage * 1.45) : baseDamage;
+  const rawDamage = critical ? Math.round(baseDamage * 1.45) : baseDamage;
+  const damage = (!missed && target.isDefending) ? Math.round(rawDamage / 2) : rawDamage;
   const heroes = state.heroes.map((hero) =>
     hero.id === target.id && !missed ? { ...hero, hp: Math.max(0, hero.hp - damage) } : hero
   );
@@ -218,16 +220,55 @@ const resolveSingleBossAttack = (state: BattleState): BattleState => {
   };
 };
 
-// Boss phase: 3–5 attacks (weighted), then tick effects once per round
+// Run one boss (by index) through its attack sequence; syncs back to bossList
+const resolveBossFromList = (state: BattleState, bossIdx: number): BattleState => {
+  const bossInList = state.bossList![bossIdx];
+  if (!bossInList || bossInList.hp <= 0) return state;
+
+  const roll = Math.random();
+  const numAttacks = roll < 0.40 ? 3 : roll < 0.80 ? 4 : 5;
+  const subState: BattleState = { ...state, boss: bossInList };
+  let current = subState;
+  for (let i = 0; i < numAttacks && current.status === 'active'; i++) {
+    current = resolveSingleBossAttack(current);
+  }
+
+  const newList = state.bossList!.map((b, i) => i === bossIdx ? current.boss : b);
+  const activeIdx = state.activeBossIndex ?? 0;
+  return {
+    ...current,
+    boss: newList[activeIdx] ?? current.boss,
+    bossList: newList,
+    activeBossIndex: activeIdx,
+  };
+};
+
+// Boss phase: 3–5 attacks (weighted), then tick effects once per round.
+// In multi-boss mode all alive bosses attack, giving ×N total attacks.
 export const resolveBossTurnPhase = (state: BattleState): BattleState => {
   if (state.status !== 'active') return state;
+
+  const clearDefend = (s: BattleState): BattleState => ({
+    ...s,
+    heroes: s.heroes.map((h) => h.isDefending ? { ...h, isDefending: false } : h),
+  });
+
+  if (state.bossList && state.bossList.length > 1) {
+    let current = state;
+    for (let i = 0; i < state.bossList.length; i++) {
+      if (current.status !== 'active') break;
+      current = resolveBossFromList(current, i);
+    }
+    return clearDefend(tickBattleEffects(current));
+  }
+
   const roll = Math.random();
   const numAttacks = roll < 0.40 ? 3 : roll < 0.80 ? 4 : 5;
   let current = state;
   for (let i = 0; i < numAttacks && current.status === 'active'; i++) {
     current = resolveSingleBossAttack(current);
   }
-  return tickBattleEffects(current);
+  return clearDefend(tickBattleEffects(current));
 };
 
 const getNextLivingHeroIndex = (

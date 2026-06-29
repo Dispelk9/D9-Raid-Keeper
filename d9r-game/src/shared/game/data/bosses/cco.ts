@@ -5,8 +5,7 @@ export const cco: RaidBossTemplate = {
   name: 'Chief Cost Cutter',
   title: 'Layoff Algorithm',
   icon: 'CCO',
-  spriteKey: 'snoo-bosses-right',
-  spriteFrame: 5,
+  spriteKey: 'boss-cco',
   stats: {
     hp: 1080,
     atk: 42,

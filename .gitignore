@@ -153,3 +153,4 @@ vite.config.ts.timestamp-*
 Thumbs.db
 .idea/
 .vscode/
+CLAUDE.local.md

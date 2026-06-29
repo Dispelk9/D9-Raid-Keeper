@@ -6,9 +6,8 @@ import { productOwner } from './bosses/productOwner';
 import { projectManager } from './bosses/projectManager';
 import { techLead } from './bosses/techLead';
 
-export const SNOO_BOSS_RIGHT_KEY = 'snoo-bosses-right';
 export const MINI_BOSS_SECRETARY_KEY = 'mini-boss-secretary';
-export const MINI_BOSS_SECURITY_KEY  = 'mini-boss-security';
+export const MINI_BOSS_SECURITY_KEY = 'mini-boss-security';
 
 export const RAID_BOSSES: RaidBossTemplate[] = [
   productOwner,
@@ -19,16 +18,6 @@ export const RAID_BOSSES: RaidBossTemplate[] = [
   cco,
 ];
 
-// Sprite frames for the snoo-bosses-right sheet (used for side-boss formation)
-export const BOSS_SPRITE_FRAMES: Record<string, number> = {
-  'product-owner':          0,
-  'project-manager':        1,
-  'tech-lead':              2,
-  'engineering-manager':    3,
-  'director-of-engineering':4,
-  'cco':                    5,
-};
-
 export const RAID_NODES: RaidNode[] = [
   {
     id: 'node-product-owner',
@@ -36,7 +25,8 @@ export const RAID_NODES: RaidNode[] = [
     bossId: productOwner.id,
     name: productOwner.name,
     title: 'Backlog Gate',
-    summary: 'Defend the team from scope creep and impossible acceptance criteria.',
+    summary:
+      'Defend the team from scope creep and impossible acceptance criteria.',
     minBattles: 1,
     maxBattles: 2,
   },
@@ -76,7 +66,8 @@ export const RAID_NODES: RaidNode[] = [
     bossId: directorOfEngineering.id,
     name: directorOfEngineering.name,
     title: 'Reorg War Room',
-    summary: 'Undo the reorg maze and rescue future teams from the layoff queue.',
+    summary:
+      'Undo the reorg maze and rescue future teams from the layoff queue.',
     minBattles: 3,
     maxBattles: 4,
   },
@@ -86,7 +77,8 @@ export const RAID_NODES: RaidNode[] = [
     bossId: cco.id,
     name: cco.name,
     title: 'Executive Cost Summit',
-    summary: 'Face the layoff algorithm and free thousands of future employees.',
+    summary:
+      'Face the layoff algorithm and free thousands of future employees.',
     minBattles: 4,
     maxBattles: 5,
   },
@@ -96,7 +88,8 @@ export const RAID_NODES: RaidNode[] = [
     bossId: cco.id,
     name: 'Executive Suite',
     title: 'Final Stand',
-    summary: 'The entire board has assembled. Face them all at once to end this.',
+    summary:
+      'The entire board has assembled. Face them all at once to end this.',
     minBattles: 2,
     maxBattles: 2,
     isHiddenFloor: true,
@@ -109,10 +102,22 @@ type BossAppearance = {
   title: string;
   icon: string;
   spriteKey: string;
-  spriteFrame?: number;
 };
 
-export const BOSS_SPRITE_MAP: Record<string, string> = {};
+export const BOSS_SPRITE_MAP: Record<string, string> = {
+  'boss-product-owner': 'assets/sprites/bosses/man_project_owner.png',
+  'boss-project-manager': 'assets/sprites/bosses/woman_project_manager.png',
+  'boss-tech-lead': 'assets/sprites/bosses/man_tech_lead.png',
+  'boss-engineering-manager':
+    'assets/sprites/bosses/man_engineering_manager.png',
+  'boss-director-of-engineering':
+    'assets/sprites/bosses/woman_director_of_engineering.png',
+  'boss-cco': 'assets/sprites/bosses/man_CEO.png',
+  [MINI_BOSS_SECRETARY_KEY]:
+    'assets/sprites/bosses/mini-bosses/woman_secretary.png',
+  [MINI_BOSS_SECURITY_KEY]:
+    'assets/sprites/bosses/mini-bosses/man_security.png',
+};
 
 export const getBossTemplate = (bossId: string) =>
   RAID_BOSSES.find((boss) => boss.id === bossId) ?? RAID_BOSSES[0]!;
@@ -136,9 +141,6 @@ export const getBossAppearance = (
     title: boss.title,
     icon: boss.icon,
     spriteKey: boss.spriteKey,
-    ...(typeof boss.spriteFrame === 'number'
-      ? { spriteFrame: boss.spriteFrame }
-      : {}),
   };
 };
 

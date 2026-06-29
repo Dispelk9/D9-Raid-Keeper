@@ -5,8 +5,7 @@ export const directorOfEngineering: RaidBossTemplate = {
   name: 'Director of Engineering',
   title: 'Reorg Architect',
   icon: 'DIR',
-  spriteKey: 'snoo-bosses-right',
-  spriteFrame: 4,
+  spriteKey: 'boss-director-of-engineering',
   stats: {
     hp: 900,
     atk: 37,

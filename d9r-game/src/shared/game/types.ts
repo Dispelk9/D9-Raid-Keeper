@@ -121,10 +121,12 @@ export type PlayerSave = {
   energy: number;
   energyRefillAt: string | null;      // ISO timestamp for when next +1 energy is due
   lastCommunityBoostAt: string | null; // ISO timestamp of last community "agile" boost received
+  lastShipItAt: string | null;          // ISO timestamp of last community "ship it" gold boost
   raidTokens: number;
   heroes: HeroProgress[];
   party: string[];
   inventory: EquipmentItem[];
+  equippedLoot?: Record<string, string[]>; // heroId → [itemId, itemId, itemId] (max 3)
   raidLevel: number;
   totalRaidDamage: number;
   bestRaidDamage: number;
@@ -186,6 +188,7 @@ export type BattleHero = {
   spd: number;
   charge: number;
   skillCooldown: number;
+  isDefending?: boolean;
   skill: HeroSkill;
   skillOptions: HeroSkill[];
   ultimate: HeroSkill;
@@ -230,6 +233,8 @@ export type BattleState = {
   status: BattleStatus;
   heroes: BattleHero[];
   boss: RaidBoss;
+  bossList?: RaidBoss[];    // all bosses for hidden floor multi-boss; boss === bossList[activeBossIndex]
+  activeBossIndex?: number; // index into bossList of the currently targeted boss
   activeHeroIndex: number;
   round: number;
   totalDamage: number;
@@ -239,4 +244,4 @@ export type BattleState = {
   encounterCount: number;
 };
 
-export type BattleAction = 'attack' | 'skill' | 'ultimate';
+export type BattleAction = 'attack' | 'skill' | 'ultimate' | 'defend';

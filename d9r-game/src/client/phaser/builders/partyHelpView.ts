@@ -1,11 +1,11 @@
 import type { GameScene } from '../scenes/GameScene';
 import { COLORS, FONT, H, W, PAD } from '../constants';
 import { HEROES } from '../../../shared/game/data/heroes';
-import { GAME_Y, ENERGY_COST } from '../scenes/GameSceneTypes';
+import { GAME_Y } from '../scenes/GameSceneTypes';
 
 export function buildPartyView(scene: GameScene): void {
   scene.partyTitleText = scene.add
-    .text(W / 2, GAME_Y + 2, 'Choose 5 Heroes', {
+    .text(W / 2, GAME_Y + 2, 'Choose 4 Heroes', {
       fontSize: '18px',
       fontStyle: 'bold',
       fontFamily: FONT.sans,
@@ -103,7 +103,7 @@ export function buildHelpView(scene: GameScene): void {
       PAD * 3,
       142,
       [
-        'A team of five developer-knights climbs the corporate hierarchy to stop the next layoff wave.',
+        'A team of four developer-knights climbs the corporate hierarchy to stop the next layoff wave.',
         '',
         'Clear raid nodes from bottom to top. Each node contains a short chain of battles. If the team falls, gems still pay out based on how many battles were cleared.',
         '',

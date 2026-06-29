@@ -5,8 +5,7 @@ export const engineeringManager: RaidBossTemplate = {
   name: 'Engineering Manager',
   title: 'Performance Review Baron',
   icon: 'EM',
-  spriteKey: 'snoo-bosses-right',
-  spriteFrame: 3,
+  spriteKey: 'boss-engineering-manager',
   stats: {
     hp: 760,
     atk: 33,

@@ -5,8 +5,7 @@ export const productOwner: RaidBossTemplate = {
   name: 'Product Owner',
   title: 'Scope Creep Herald',
   icon: 'PO',
-  spriteKey: 'snoo-bosses-right',
-  spriteFrame: 0,
+  spriteKey: 'boss-product-owner',
   stats: {
     hp: 480,
     atk: 22,

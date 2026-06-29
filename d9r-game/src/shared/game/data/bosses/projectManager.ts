@@ -5,8 +5,7 @@ export const projectManager: RaidBossTemplate = {
   name: 'Project Manager',
   title: 'Deadline Marshal',
   icon: 'PM',
-  spriteKey: 'snoo-bosses-right',
-  spriteFrame: 1,
+  spriteKey: 'boss-project-manager',
   stats: {
     hp: 560,
     atk: 25,

@@ -1,7 +1,7 @@
 import type { HeroTemplate } from '../../types';
 
 export const backendDeveloper: HeroTemplate = {
-  id: 'karma-duelist',
+  id: 'backend-developer',
   name: 'Backend Developer',
   title: 'API Knight',
   role: 'Backend',

@@ -1,24 +1,33 @@
 import type { GameScene } from '../scenes/GameScene';
-import { COLORS, FONT, W, PAD } from '../constants';
-import { HUD_KEY } from '../scenes/BootScene';
-import { SNOO_BOSS_RIGHT_KEY } from '../../../shared/game/data/raidBosses';
-import { MAX_LOGS, canUseUltimate, getActiveHero } from '../../../shared/game/logic/combat';
+import { COLORS, FONT, PAD } from '../constants';
 import {
-  STAGE_X, STAGE_Y, STAGE_W, STAGE_H, INFO_BAR_H, ACTION_H, BANNER_ZONE_H,
-  BOSS_AREA_W, HERO_AREA_X, HERO_AREA_W, HERO_SLOT_H, HERO_SPRITE_SIZE,
-  HERO_BAR_X_OFF, HERO_FRAME_DISPLAY_W, HERO_FRAME_DISPLAY_H, FALLBACK_HERO_ID, STATS_BAR_Y
+  MAX_LOGS,
+  canUseUltimate,
+} from '../../../shared/game/logic/combat';
+import {
+  STAGE_X,
+  STAGE_Y,
+  STAGE_W,
+  STAGE_H,
+  INFO_BAR_H,
+  BANNER_ZONE_H,
+  BOSS_CONTENT_H,
+  HERO_GRID_Y,
+  HERO_CELL_W,
+  HERO_CELL_H,
+  HERO_SPRITE_SIZE,
+  FALLBACK_HERO_ID,
+  STATS_BAR_Y,
 } from '../scenes/GameSceneTypes';
 
 // offices.png: 3-col × 2-row grid, each cell 512×512
-// frame 1 (top-middle) = CCO/CEO (user-confirmed)
-// frame 4 (bottom-middle) = PM yellow office
 const OFFICE_FRAME: Record<number, number> = {
-  1: 3, // Product Owner → bottom-left
-  2: 4, // Project Manager → bottom-middle (yellow)
-  3: 5, // Tech Lead → bottom-right
-  4: 0, // Engineering Manager → top-left
-  5: 2, // Director of Engineering → top-right
-  6: 1, // CCO → top-middle (confirmed by user)
+  1: 3,
+  2: 4,
+  3: 5,
+  4: 0,
+  5: 2,
+  6: 1,
 };
 
 export function buildRaidView(scene: GameScene): void {
@@ -26,8 +35,7 @@ export function buildRaidView(scene: GameScene): void {
   buildBossInfoBar(scene);
   buildBossSprite(scene);
   buildSideBossSprites(scene);
-  buildHeroSlotsUI(scene);
-  buildActionButtons(scene);
+  buildHeroGrid(scene);
   buildActiveHighlight(scene);
   buildBattleLog(scene);
 }
@@ -37,15 +45,13 @@ export function buildBattleField(scene: GameScene): void {
     .image(STAGE_X + STAGE_W / 2, STAGE_Y + STAGE_H / 2, 'offices', 0)
     .setDisplaySize(STAGE_W, STAGE_H)
     .setOrigin(0.5);
-
   scene.raidGroup.add(scene.stageBg);
 }
 
 export function updateStageBg(scene: GameScene, raidLevel: number): void {
   const frame = OFFICE_FRAME[raidLevel] ?? 0;
-  if (scene.textures.exists('offices')) {
+  if (scene.textures.exists('offices'))
     scene.stageBg.setTexture('offices', frame);
-  }
 }
 
 export function buildBossInfoBar(scene: GameScene): void {
@@ -103,23 +109,22 @@ export function buildBossInfoBar(scene: GameScene): void {
 }
 
 export function buildBossSprite(scene: GameScene): void {
-  const contentY = STAGE_Y + INFO_BAR_H + BANNER_ZONE_H + PAD;
-  const contentH = STAGE_H - INFO_BAR_H - BANNER_ZONE_H - PAD - ACTION_H - PAD * 2;
-  const bossCX = STAGE_X + Math.floor(BOSS_AREA_W / 2);
-  const bossCY = contentY + Math.floor(contentH / 2);
-  const bossR = 56;
+  const contentY = STAGE_Y + INFO_BAR_H + BANNER_ZONE_H;
+  const bossCX = STAGE_X + Math.floor(STAGE_W / 2);
+  const bossCY = contentY + Math.floor(BOSS_CONTENT_H / 2);
   scene.bossCX = bossCX;
   scene.bossCY = bossCY;
 
+  const bossR = 70;
   scene.bossAura = scene.add.arc(
     bossCX,
     bossCY,
-    bossR + 20,
+    bossR + 24,
     0,
     360,
     false,
     COLORS.boss,
-    0.25
+    0.22
   );
   scene.tweens.add({
     targets: scene.bossAura,
@@ -132,10 +137,9 @@ export function buildBossSprite(scene: GameScene): void {
     repeat: -1,
   });
 
-  // Boss image — texture is set in refreshBoss(); hidden until first refresh
   scene.bossImage = scene.add
-    .image(bossCX, bossCY, SNOO_BOSS_RIGHT_KEY)
-    .setDisplaySize(bossR * 2, bossR * 2)
+    .image(bossCX, bossCY, 'boss-product-owner')
+    .setDisplaySize(120, 180)
     .setOrigin(0.5)
     .setVisible(false);
 
@@ -143,132 +147,254 @@ export function buildBossSprite(scene: GameScene): void {
 }
 
 export function buildSideBossSprites(scene: GameScene): void {
-  // Two flanking boss images for the hidden floor multi-boss formation.
-  // Side bosses are drawn AFTER the center boss so they render on top (closer).
-  const contentY = STAGE_Y + INFO_BAR_H + BANNER_ZONE_H + PAD;
-  const contentH = STAGE_H - INFO_BAR_H - BANNER_ZONE_H - PAD - ACTION_H - PAD * 2;
-  const bossCY   = contentY + Math.floor(contentH / 2);
+  // Multi-boss layout: horizontal row of up to 3 bosses centered in the boss content area
+  const contentY = STAGE_Y + INFO_BAR_H + BANNER_ZONE_H;
+  const slotW = Math.floor(STAGE_W / 3);
+  const slotH = BOSS_CONTENT_H;
 
   scene.sideBossImages = [];
+  scene.multiBossRefs = [];
 
-  const leftImg = scene.add
-    .image(scene.bossCX - 46, bossCY + 14, SNOO_BOSS_RIGHT_KEY, 0)
-    .setDisplaySize(84, 84)
-    .setOrigin(0.5)
-    .setVisible(false);
+  for (let i = 0; i < 3; i++) {
+    const slotCX = STAGE_X + i * slotW + Math.floor(slotW / 2);
+    const slotCY = contentY + Math.floor(slotH / 2);
+    const ring = scene.add.graphics();
+    const img = scene.add
+      .image(slotCX, slotCY - 14, 'boss-product-owner')
+      .setDisplaySize(80, 120)
+      .setOrigin(0.5)
+      .setVisible(false);
 
-  const rightImg = scene.add
-    .image(scene.bossCX + 46, bossCY + 14, SNOO_BOSS_RIGHT_KEY, 0)
-    .setDisplaySize(84, 84)
-    .setOrigin(0.5)
-    .setVisible(false);
-
-  scene.sideBossImages.push(leftImg, rightImg);
-  scene.raidGroup.add([leftImg, rightImg]);
-}
-
-export function buildHeroSlotsUI(scene: GameScene): void {
-  const contentY = STAGE_Y + INFO_BAR_H + BANNER_ZONE_H + PAD;
-  const slotW = HERO_AREA_W - PAD;
-  const textX = HERO_AREA_X + HERO_BAR_X_OFF;
-  const stroke = { stroke: '#000000', strokeThickness: 3 };
-
-  for (let i = 0; i < 5; i++) {
-    const sx = HERO_AREA_X;
-    const sy = contentY + i * (HERO_SLOT_H + 5);
-    const cx = sx + HERO_SPRITE_SIZE / 2 - 2;
-    const cy = sy + HERO_SLOT_H / 2;
-
-    const icon = scene.add
-      .image(cx, cy, scene.getHeroSpriteKey(FALLBACK_HERO_ID))
-      .setDisplaySize(HERO_FRAME_DISPLAY_W, HERO_FRAME_DISPLAY_H)
-      .setOrigin(0.5);
-    scene.setHeroPose(icon, FALLBACK_HERO_ID, 'idle');
-
-    const hpText = scene.add
-      .text(textX, cy - 8, '—', {
-        fontSize: '13px',
+    const nameText = scene.add
+      .text(slotCX, slotCY + 50, '', {
+        fontSize: '9px',
         fontStyle: 'bold',
         fontFamily: FONT.sans,
-        color: '#ffffff',
-        ...stroke,
+        color: '#18181b',
+        align: 'center',
+        wordWrap: { width: slotW - 8 },
       })
-      .setOrigin(0, 0.5);
+      .setOrigin(0.5, 0)
+      .setVisible(false);
 
-    const lbText = scene.add
-      .text(textX, cy + 12, '—%', {
-        fontSize: '11px',
-        fontStyle: 'bold',
-        fontFamily: FONT.sans,
-        color: '#fbbf24',
-        ...stroke,
-      })
-      .setOrigin(0, 0.5);
+    const hitArea = scene.add
+      .rectangle(slotCX, slotCY, slotW - 4, slotH - 4, 0, 0)
+      .setInteractive({ useHandCursor: true })
+      .setVisible(false);
 
-    scene.raidGroup.add([icon, hpText, lbText]);
-    scene.heroSlots.push({
-      icon,
-      hpText,
-      lbText,
-      objects: [icon, hpText, lbText],
-      iconCX: cx,
-      iconCY: cy,
-      sx,
-      sy,
-      sw: slotW,
-      sh: HERO_SLOT_H,
-    });
+    const bossIndex = i;
+    hitArea.on('pointerdown', () => scene.handleBossTarget(bossIndex));
+
+    scene.raidGroup.add([ring, img, nameText, hitArea]);
+    scene.multiBossRefs.push({ image: img, nameText, hitArea, ring });
   }
 }
 
-export function buildActionButtons(scene: GameScene): void {
-  const btnY = STAGE_Y + STAGE_H - PAD - ACTION_H / 2;
-  const btnW = Math.floor((STAGE_W - PAD * 4) / 3);
-  const gap = Math.floor((STAGE_W - PAD * 2 - btnW * 3) / 2);
-  const startX = STAGE_X + PAD + btnW / 2;
+// ── 2×2 hero grid ────────────────────────────────────────────────────────────
+export function buildHeroGrid(scene: GameScene): void {
+  const BTN_H = 26;
+  const BTN_ROW_Y = HERO_CELL_H - 4 - BTN_H / 2; // btn center from cell top
+  const BTN_W = Math.floor((HERO_CELL_W - PAD * 4) / 3);
+  const ICON_R = HERO_SPRITE_SIZE / 2;
+  const ICON_CX_OFF = 4 + ICON_R;
+  const ICON_CY_OFF = Math.floor((HERO_CELL_H - BTN_H - 8) / 2);
+  const TEXT_X_OFF = 4 + HERO_SPRITE_SIZE + 6;
+  const BAR_W = HERO_CELL_W - TEXT_X_OFF - 6;
+  // Upper non-button area height (used for cell hit area)
+  const UPPER_H = HERO_CELL_H - BTN_H - 8;
 
-  const hud = scene.add
-    .image(STAGE_X + STAGE_W / 2, btnY, HUD_KEY)
-    .setDisplaySize(STAGE_W - PAD * 2, ACTION_H)
-    .setOrigin(0.5);
-  scene.raidGroup.add(hud);
+  for (let i = 0; i < 4; i++) {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const sx = STAGE_X + col * HERO_CELL_W;
+    const sy = HERO_GRID_Y + row * HERO_CELL_H;
 
-  const makeBtn = (cx: number, label: string) => {
-    const bg = scene.add
-      .rectangle(cx, btnY, btnW, ACTION_H - 18, 0x000000, 0.001)
-      .setInteractive({ useHandCursor: true });
-    const txt = scene.add
-      .text(cx, btnY, label, {
-        fontSize: '13px',
+    // Cell background + border
+    const cellBg = scene.add.graphics();
+    cellBg.fillStyle(0x000000, 0.38);
+    cellBg.fillRect(sx, sy, HERO_CELL_W, HERO_CELL_H);
+    cellBg.lineStyle(1, COLORS.border, 0.5);
+    cellBg.strokeRect(sx, sy, HERO_CELL_W, HERO_CELL_H);
+
+    const iconCX = sx + ICON_CX_OFF;
+    const iconCY = sy + ICON_CY_OFF;
+
+    const icon = scene.add
+      .image(iconCX, iconCY, scene.getHeroSpriteKey(FALLBACK_HERO_ID))
+      .setDisplaySize(HERO_SPRITE_SIZE, HERO_SPRITE_SIZE)
+      .setOrigin(0.5);
+    scene.setHeroPose(icon, FALLBACK_HERO_ID, 'idle');
+
+    // ── HP bar + text ─────────────────────────────────────────────────
+    const hpBarY = sy + 10;
+    const hpBarBg = scene.add
+      .rectangle(sx + TEXT_X_OFF, hpBarY, BAR_W, 5, COLORS.track)
+      .setOrigin(0, 0.5);
+    const hpBarFill = scene.add
+      .rectangle(sx + TEXT_X_OFF, hpBarY, BAR_W, 5, COLORS.hp)
+      .setOrigin(0, 0.5);
+
+    const hpText = scene.add
+      .text(sx + TEXT_X_OFF, hpBarY + 7, '—', {
+        fontSize: '9px',
         fontStyle: 'bold',
         fontFamily: FONT.sans,
         color: '#ffffff',
+        stroke: '#000000',
+        strokeThickness: 2,
       })
-      .setOrigin(0.5);
-    scene.raidGroup.add([bg, txt]);
-    return [bg, txt] as const;
-  };
+      .setOrigin(0, 0);
 
-  [scene.attackBtnBg, scene.attackBtnText] = makeBtn(startX, 'Attack');
-  scene.attackBtnBg.on('pointerdown', () => scene.handleAction('attack'));
+    // ── LB bar + text ─────────────────────────────────────────────────
+    const lbBarY = sy + 32;
+    const lbBarBg = scene.add
+      .rectangle(sx + TEXT_X_OFF, lbBarY, BAR_W, 5, COLORS.track)
+      .setOrigin(0, 0.5);
+    const lbBarFill = scene.add
+      .rectangle(sx + TEXT_X_OFF, lbBarY, 1, 5, COLORS.charge)
+      .setOrigin(0, 0.5);
 
-  [scene.skillBtnBg, scene.skillBtnText] = makeBtn(
-    startX + btnW + gap,
-    'Skill'
-  );
-  scene.skillBtnBg.on('pointerdown', () => scene.openSkillChoice());
+    const lbText = scene.add
+      .text(sx + TEXT_X_OFF, lbBarY + 7, '—%', {
+        fontSize: '9px',
+        fontStyle: 'bold',
+        fontFamily: FONT.sans,
+        color: '#fbbf24',
+        stroke: '#000000',
+        strokeThickness: 2,
+      })
+      .setOrigin(0, 0);
 
-  [scene.ultBtnBg, scene.ultBtnText] = makeBtn(
-    startX + (btnW + gap) * 2,
-    '⚡ Limit'
-  );
-  scene.ultBtnBg.on('pointerdown', () => {
-    if (!scene.battle || scene.battle.status !== 'active') return;
-    const activeHero = getActiveHero(scene.battle);
-    if (!activeHero || !canUseUltimate(activeHero)) return;
-    const ultName = activeHero.ultimate?.name ?? '⚡ Limit Break';
-    scene.showHeroSkillBanner(ultName, () => scene.handleAction('ultimate'));
-  });
+    // ── Cell-wide hit area for attack (above buttons) ─────────────────
+    const heroIdx = i;
+    const cellHit = scene.add
+      .rectangle(
+        sx + HERO_CELL_W / 2,
+        sy + UPPER_H / 2,
+        HERO_CELL_W,
+        UPPER_H,
+        0x000000,
+        0
+      )
+      .setInteractive({ useHandCursor: true });
+    cellHit.on('pointerdown', () => scene.handleHeroAction(heroIdx, 'attack'));
+
+    // ── Action buttons: SKL, LMT, DEFEND ─────────────────────────────
+    const btnCY = sy + BTN_ROW_Y;
+    const makeBtn = (bx: number, label: string, color: number) => {
+      const bg = scene.add
+        .rectangle(bx + BTN_W / 2, btnCY, BTN_W, BTN_H, color)
+        .setInteractive({ useHandCursor: true });
+      const txt = scene.add
+        .text(bx + BTN_W / 2, btnCY, label, {
+          fontSize: '9px',
+          fontStyle: 'bold',
+          fontFamily: FONT.sans,
+          color: '#ffffff',
+        })
+        .setOrigin(0.5);
+      scene.raidGroup.add([bg, txt]);
+      return [bg, txt] as const;
+    };
+
+    const sklX = sx + PAD;
+    const lmtX = sklX + BTN_W + PAD;
+    const defX = lmtX + BTN_W + PAD;
+
+    const [sklBg, sklText] = makeBtn(sklX, 'SKL', COLORS.btnSkill);
+    const [lmtBg, lmtText] = makeBtn(lmtX, 'LMT', COLORS.btnUlt);
+    const [defBg, defText] = makeBtn(defX, 'DEF', COLORS.btnDefend);
+
+    sklBg.on('pointerdown', () => scene.openSkillChoice(heroIdx));
+    lmtBg.on('pointerdown', () => {
+      if (!scene.battle || scene.battle.status !== 'active') return;
+      const hero = scene.battle.heroes[heroIdx];
+      if (!hero || !canUseUltimate(hero)) return;
+      const ultName = hero.ultimate?.name ?? '⚡ Limit Break';
+      scene.showHeroSkillBanner(ultName, () =>
+        scene.handleHeroAction(heroIdx, 'ultimate')
+      );
+    });
+    defBg.on('pointerdown', () => scene.handleHeroAction(heroIdx, 'defend'));
+
+    // Acted overlay
+    const actedDim = scene.add
+      .rectangle(
+        sx + HERO_CELL_W / 2,
+        sy + HERO_CELL_H / 2,
+        HERO_CELL_W,
+        HERO_CELL_H,
+        0x000000,
+        0.45
+      )
+      .setVisible(false);
+
+    // Shield overlay (shown while hero.isDefending)
+    const shieldIcon = scene.add
+      .text(iconCX + 20, iconCY - 20, '🛡', {
+        fontSize: '18px',
+        fontFamily: FONT.emoji ?? 'serif',
+      })
+      .setOrigin(0.5)
+      .setDepth(14)
+      .setVisible(false);
+
+    scene.raidGroup.add([
+      cellBg,
+      icon,
+      hpBarBg,
+      hpBarFill,
+      hpText,
+      lbBarBg,
+      lbBarFill,
+      lbText,
+      cellHit,
+      actedDim,
+      shieldIcon,
+    ]);
+
+    scene.heroSlots.push({
+      icon,
+      hpBarFill,
+      lbBarFill,
+      hpText,
+      lbText,
+      objects: [
+        cellBg,
+        icon,
+        hpBarBg,
+        hpBarFill,
+        hpText,
+        lbBarBg,
+        lbBarFill,
+        lbText,
+        cellHit,
+        sklBg,
+        sklText,
+        lmtBg,
+        lmtText,
+        defBg,
+        defText,
+        actedDim,
+        shieldIcon,
+      ],
+      iconCX,
+      iconCY,
+      sx,
+      sy,
+      sw: HERO_CELL_W,
+      sh: HERO_CELL_H,
+      cellHit,
+      defBg,
+      defText,
+      sklBg,
+      sklText,
+      lmtBg,
+      lmtText,
+      actedDim,
+      shieldIcon,
+    });
+  }
 }
 
 export function buildActiveHighlight(scene: GameScene): void {
@@ -280,7 +406,7 @@ export function buildBattleLog(scene: GameScene): void {
   const lbY = STATS_BAR_Y;
   const lbW = STAGE_W;
   const headerH = 22;
-  const lineH = 22;
+  const lineH = 30;
   const lbH = headerH + MAX_LOGS * lineH + PAD;
 
   const bg = scene.add.graphics();
@@ -311,6 +437,5 @@ export function buildBattleLog(scene: GameScene): void {
     lines.push(lt);
   }
   scene.battleLogLines = lines;
-
   scene.raidGroup.add([bg, scene.battleLogHeader, ...lines]);
 }

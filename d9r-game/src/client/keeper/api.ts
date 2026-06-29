@@ -33,7 +33,7 @@ const storeLocalSave = (save: PlayerSave) => {
   window.localStorage.setItem(getLocalSaveKey(save.username), JSON.stringify(save));
 };
 
-export const loadKeeperSave = async (fallbackUsername: string): Promise<{ save: PlayerSave; communityBoost: boolean }> => {
+export const loadKeeperSave = async (fallbackUsername: string): Promise<{ save: PlayerSave; communityBoost: boolean; shipItBoost: boolean }> => {
   try {
     const response = await fetch('/api/keeper');
 
@@ -41,19 +41,26 @@ export const loadKeeperSave = async (fallbackUsername: string): Promise<{ save: 
       const data: KeeperLoadResponse | ApiErrorResponse = await response.json();
 
       if (data.status === 'ok') {
-        const save = normalizePlayerSave(data.save);
+        const serverSave = normalizePlayerSave(data.save);
+        const localSave  = loadLocalSave(fallbackUsername);
+        // Prefer whichever save is more recent — guards against stale server data
+        // when a previous POST failed (e.g. dev-server restart cleared Redis)
+        const save = localSave && localSave.updatedAt > serverSave.updatedAt
+          ? localSave
+          : serverSave;
         storeLocalSave(save);
-        return { save, communityBoost: data.communityBoost ?? false };
+        return { save, communityBoost: data.communityBoost ?? false, shipItBoost: data.shipItBoost ?? false };
       }
     }
   } catch {
     const localSave = loadLocalSave(fallbackUsername);
-    if (localSave) return { save: localSave, communityBoost: false };
+    if (localSave) return { save: localSave, communityBoost: false, shipItBoost: false };
   }
 
   return {
     save: loadLocalSave(fallbackUsername) ?? createInitialPlayerSave(fallbackUsername),
     communityBoost: false,
+    shipItBoost: false,
   };
 };
 

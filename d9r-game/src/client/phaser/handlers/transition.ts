@@ -22,9 +22,7 @@ export function showBattleTransition(
   if (!scene.textures.exists('offices')) missing.push('offices');
 
   // ── Build overlay elements ────────────────────────────────────────────
-  const overlay = scene.add
-    .rectangle(cx, cy, W, H, 0x000000, 0)
-    .setDepth(D);
+  const overlay = scene.add.rectangle(cx, cy, W, H, 0x000000, 0).setDepth(D);
 
   const floorLabel = scene.add
     .text(cx, cy - 170, `FLOOR  ${node.level}`, {
@@ -62,10 +60,9 @@ export function showBattleTransition(
   // Boss sprite preview
   let bossPreview: Phaser.GameObjects.Image | null = null;
   if (bossTexOk) {
-    const frame = typeof boss.spriteFrame === 'number' ? boss.spriteFrame : 0;
     bossPreview = scene.add
-      .image(cx, cy + 10, boss.spriteKey, frame)
-      .setDisplaySize(148, 148)
+      .image(cx, cy + 10, boss.spriteKey)
+      .setDisplaySize(100, 150)
       .setAlpha(0)
       .setDepth(D + 1);
   }
@@ -92,7 +89,7 @@ export function showBattleTransition(
 
   // Party hero icons — sprites are pre-generated before this transition starts
   const iconSize = 42;
-  const spacing  = 50;
+  const spacing = 50;
   const rowX0 = cx - ((heroes.length - 1) / 2) * spacing;
   const heroIcons = heroes.map((hero, i) => {
     const key = scene.textures.exists(scene.getHeroSpriteKey(hero.id))
@@ -108,9 +105,9 @@ export function showBattleTransition(
   });
 
   // Loading bar
-  const barW2   = 180;
-  const barY    = cy + 170;
-  const barBg   = scene.add
+  const barW2 = 180;
+  const barY = cy + 170;
+  const barBg = scene.add
     .rectangle(cx, barY, barW2, 4, 0x1f2937)
     .setAlpha(0)
     .setDepth(D + 1);
@@ -130,10 +127,18 @@ export function showBattleTransition(
     .setDepth(D + 1);
 
   const allObjs: Phaser.GameObjects.GameObject[] = [
-    overlay, floorLabel, bossLabel, bossSubLabel,
+    overlay,
+    floorLabel,
+    bossLabel,
+    bossSubLabel,
     ...(bossPreview ? [bossPreview] : []),
-    divLeft, divRight, vsLabel,
-    ...heroIcons, barBg, barFill, statusText,
+    divLeft,
+    divRight,
+    vsLabel,
+    ...heroIcons,
+    barBg,
+    barFill,
+    statusText,
   ];
   const destroyAll = () => allObjs.forEach((o) => o.destroy());
 
@@ -147,10 +152,17 @@ export function showBattleTransition(
     onComplete: () => {
       // Phase 2 — fade in content (250ms)
       const fadeTargets = [
-        floorLabel, bossLabel, bossSubLabel,
+        floorLabel,
+        bossLabel,
+        bossSubLabel,
         ...(bossPreview ? [bossPreview] : []),
-        divLeft, divRight, vsLabel,
-        ...heroIcons, barBg, barFill, statusText,
+        divLeft,
+        divRight,
+        vsLabel,
+        ...heroIcons,
+        barBg,
+        barFill,
+        statusText,
       ];
       scene.tweens.add({ targets: fadeTargets, alpha: 1, duration: 250 });
 
@@ -165,7 +177,9 @@ export function showBattleTransition(
       // Phase 3 — after 950ms update status and show "BATTLE START"
       scene.time.delayedCall(950, () => {
         const allReady = missing.length === 0;
-        statusText.setText(allReady ? '✓  Ready' : `⚠ Missing: ${missing.join(', ')}`);
+        statusText.setText(
+          allReady ? '✓  Ready' : `⚠ Missing: ${missing.join(', ')}`
+        );
         statusText.setColor(allReady ? '#22c55e' : '#f59e0b');
 
         scene.time.delayedCall(420, () => {

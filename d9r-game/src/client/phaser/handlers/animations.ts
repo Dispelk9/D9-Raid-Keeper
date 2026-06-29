@@ -1,7 +1,7 @@
 // Visual animation helpers for combat — extracted from actions.ts to stay under 500 lines
 import type { GameScene } from '../scenes/GameScene';
 import { FONT, PAD } from '../constants';
-import { EFFECT_KEYS } from '../scenes/BootScene';
+import { EFFECT_KEYS, EFFECT_SEQUENCES } from '../scenes/BootScene';
 import type { EffectKey } from '../scenes/BootScene';
 import type { BattleAction, BattleHero, BattleState, BossSpecialEffectType, HeroSkill } from '../../../shared/game/types';
 import { STAGE_X, STAGE_Y, STAGE_W, INFO_BAR_H, BANNER_ZONE_H, HERO_SPRITE_SIZE } from '../scenes/GameSceneTypes';
@@ -9,9 +9,9 @@ import type { BossAttackCue } from '../scenes/GameSceneTypes';
 
 // Local copies of static maps from GameScene (avoids circular runtime imports)
 export const HERO_MAGIC_EFFECT: Record<string, EffectKey> = {
-  'snoo-vanguard': EFFECT_KEYS.fire,
-  'flair-archmage': EFFECT_KEYS.light,
-  'automod-oracle': EFFECT_KEYS.water,
+  'frontend-developer': EFFECT_KEYS.fire,
+  'devops-engineer':    EFFECT_KEYS.light,
+  'data-engineer':      EFFECT_KEYS.water,
 };
 
 export const BOSS_DEBUFF_EFFECT: Record<BossSpecialEffectType, EffectKey> = {
@@ -52,11 +52,11 @@ export function showBossAttackBanner(scene: GameScene, skillName: string, onAfte
     alpha: 1,
     duration: 180,
     onComplete: () => {
-      scene.time.delayedCall(420, () => {
+      scene.time.delayedCall(280, () => {
         scene.tweens.add({
           targets: [bg, text],
           alpha: 0,
-          duration: 220,
+          duration: 180,
           onComplete: () => {
             bg.destroy();
             text.destroy();
@@ -108,7 +108,15 @@ export function showHeroSkillBanner(scene: GameScene, skillName: string, onCompl
 }
 
 export function animateBossDefeat(scene: GameScene): void {
-  const defeatTargets: Phaser.GameObjects.GameObject[] = [scene.bossImage, scene.bossAura, ...scene.sideBossImages];
+  // Cover both single-boss and multi-boss formation sprites
+  const multiBossImgs = scene.multiBossRefs
+    .map((r) => r.image)
+    .filter((img) => img.visible);
+  const defeatTargets: Phaser.GameObjects.GameObject[] = [
+    scene.bossImage, scene.bossAura,
+    ...scene.sideBossImages,
+    ...multiBossImgs,
+  ];
   scene.tweens.add({
     targets: defeatTargets,
     alpha: 0,
@@ -138,6 +146,113 @@ export function spawnEffectSprite(scene: GameScene, effectKey: EffectKey, x: num
     ease: 'Cubic.Out',
     onComplete: () => img.destroy(),
   });
+}
+
+// Play a flip-book animation by showing each frame key in sequence.
+// Returns the total duration (ms) so callers can delay follow-up events.
+export function spawnEffectSequence(scene: GameScene, frameKeys: string[], x: number, y: number, size = 128, msPerFrame = 55): number {
+  if (frameKeys.length === 0) return 0;
+  frameKeys.forEach((key, i) => {
+    scene.time.delayedCall(i * msPerFrame, () => {
+      if (!scene.textures.exists(key)) return;
+      const img = scene.add.image(x, y, key)
+        .setDisplaySize(size, size)
+        .setOrigin(0.5)
+        .setDepth(16)
+        .setAlpha(0.92);
+      scene.tweens.add({
+        targets: img,
+        alpha: 0,
+        duration: msPerFrame * 2.8,
+        ease: 'Cubic.Out',
+        onComplete: () => img.destroy(),
+      });
+    });
+  });
+  return (frameKeys.length - 1) * msPerFrame + Math.round(msPerFrame * 2.8);
+}
+
+// FFBE-style chain counter — shows "Chain N" above the boss, incrementing with each hit.
+// hitOffsets[i] = ms after call when hero i's effect lands (impact point ~2 frames in).
+export function spawnChainCounter(
+  scene: GameScene,
+  hitOffsets: number[],
+  cx: number,
+  cy: number
+): void {
+  if (hitOffsets.length < 2) return;
+
+  const chainText = scene.add
+    .text(cx, cy, '', {
+      fontSize: '30px',
+      fontStyle: 'bold',
+      fontFamily: FONT.sans,
+      color: '#fbbf24',
+      stroke: '#000000',
+      strokeThickness: 5,
+    })
+    .setOrigin(0.5)
+    .setDepth(22)
+    .setAlpha(0);
+
+  // Chain starts at 2 (first hit alone is not a "chain")
+  for (let i = 1; i < hitOffsets.length; i++) {
+    const chainN = i + 1;
+    const color = chainN >= 5 ? '#ff44aa' : chainN >= 4 ? '#ff4444' : chainN >= 3 ? '#ff8800' : '#fbbf24';
+    scene.time.delayedCall(hitOffsets[i]!, () => {
+      chainText.setText(`Chain ${chainN}`)
+        .setColor(color)
+        .setAlpha(1)
+        .setScale(1.6);
+      scene.tweens.add({
+        targets: chainText,
+        scaleX: 1,
+        scaleY: 1,
+        duration: 130,
+        ease: 'Back.Out',
+      });
+    });
+  }
+
+  // Linger then fade after last hit
+  const lastOffset = hitOffsets[hitOffsets.length - 1]!;
+  scene.time.delayedCall(lastOffset + 500, () => {
+    scene.tweens.add({
+      targets: chainText,
+      alpha: 0,
+      scaleX: 1.3,
+      scaleY: 1.3,
+      duration: 280,
+      ease: 'Sine.In',
+      onComplete: () => chainText.destroy(),
+    });
+  });
+}
+
+// Returns the sequential frame key array for a hero's action.
+export function getHeroEffectSeq(hero: BattleHero, action: BattleAction, selectedSkill?: HeroSkill): string[] {
+  if (action === 'ultimate') return EFFECT_SEQUENCES['skill-cosmic5'] ?? [];
+  if (action === 'attack') {
+    return EFFECT_SEQUENCES[`hero-atk-${hero.id}`] ?? EFFECT_SEQUENCES['hero-atk-frontend-developer'] ?? [];
+  }
+  const skill = selectedSkill ?? hero.skill;
+  if (skill.kind === 'heal') return EFFECT_SEQUENCES['skill-water'] ?? [];
+  if (skill.kind === 'rally') return EFFECT_SEQUENCES['skill-light'] ?? [];
+  if (skill.kind === 'spell') {
+    const spellSeq: Record<string, string[]> = {
+      'frontend-developer': EFFECT_SEQUENCES['skill-fire'] ?? [],
+      'devops-engineer':    EFFECT_SEQUENCES['skill-light'] ?? [],
+      'data-engineer':      EFFECT_SEQUENCES['skill-cosmic3'] ?? [],
+    };
+    return spellSeq[hero.id] ?? EFFECT_SEQUENCES['skill-cosmic1'] ?? [];
+  }
+  // strike / other kinds — use per-hero cosmic variant
+  const strikeSeq: Record<string, string[]> = {
+    'backend-developer': EFFECT_SEQUENCES['skill-cosmic1'] ?? [],
+    'qa-tester':         EFFECT_SEQUENCES['skill-cosmic2'] ?? [],
+    'data-engineer':     EFFECT_SEQUENCES['skill-cosmic4'] ?? [],
+  };
+  return strikeSeq[hero.id] ?? EFFECT_SEQUENCES['skill-cosmic4'] ?? [];
 }
 
 export function spawnBossStatusEffects(scene: GameScene, cues: BossAttackCue[], battle: BattleState): void {
@@ -231,6 +346,12 @@ export function animateActiveHeroAction(
   const slot = scene.heroSlots[slotIndex];
   if (!slot) return;
 
+  if (action === 'defend') {
+    // No sprite scaling — shield icon appears via refreshHeroSlots
+    scene.setHeroPose(slot.icon, heroId, 'idle');
+    return;
+  }
+
   scene.setHeroPose(slot.icon, heroId, action === 'attack' ? 'attack' : 'cast');
   slot.icon.setX(slot.iconCX);
   scene.tweens.add({
@@ -293,4 +414,14 @@ export function getBossImpactEffectKey(cues: BossAttackCue[]): EffectKey {
   return cueWithEffect?.effectType
     ? BOSS_DEBUFF_EFFECT[cueWithEffect.effectType]
     : EFFECT_KEYS.bossStrike;
+}
+
+// Returns sequential frame keys for boss strike effects, cycling through 3 patterns per cue
+export function getBossStrikeSeq(cueIndex: number): string[] {
+  const seqs = [
+    EFFECT_SEQUENCES['boss-strike1'] ?? [],
+    EFFECT_SEQUENCES['boss-strike2'] ?? [],
+    EFFECT_SEQUENCES['boss-strike3'] ?? [],
+  ];
+  return seqs[cueIndex % seqs.length] ?? [];
 }

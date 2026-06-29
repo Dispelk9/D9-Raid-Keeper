@@ -8,12 +8,13 @@ import type {
 import { addLog, MAX_LOGS as _MAX_LOGS, ULTIMATE_CHARGE } from './combatCalcs';
 import { getMissChance, getCritChance, getDamage } from './combatCalcs';
 import { applySkillEffect } from './combatEffects';
-import { advanceHeroAndMaybeBoss } from './combatBoss';
+import { advanceHeroAndMaybeBoss, resolveBossTurnPhase } from './combatBoss';
 import { createBattleState as _createBattleState } from './battleSetup';
 
 // Re-export public API so existing importers continue to work
 export { MAX_LOGS } from './combatCalcs';
 export { createBattleState } from './battleSetup';
+export { resolveBossTurnPhase } from './combatBoss';
 
 const getLowestAlly = (heroes: BattleHero[]) => {
   const livingHeroes = heroes.filter((hero) => hero.hp > 0);
@@ -184,7 +185,7 @@ const resolveHeroStrike = (
 
     return hero;
   });
-  const { heroes, boss } = applySkillEffect(
+  const { heroes, boss: updatedBoss } = applySkillEffect(
     skill,
     actor,
     chargedHeroes,
@@ -194,7 +195,31 @@ const resolveHeroStrike = (
     },
     !missed
   );
-  const status = nextBossHp <= 0 ? 'won' : state.status;
+
+  // Sync updated boss back to bossList (multi-boss mode)
+  let boss = updatedBoss;
+  let outBossList = state.bossList;
+  let outActiveIdx = state.activeBossIndex;
+  let status = state.status;
+
+  if (state.bossList && state.activeBossIndex !== undefined) {
+    const newList = state.bossList.map((b, i) => i === state.activeBossIndex ? updatedBoss : b);
+    if (newList.every(b => b.hp <= 0)) {
+      status = 'won';
+      outBossList = newList;
+    } else if (updatedBoss.hp <= 0) {
+      // Advance to next alive boss
+      const nextIdx = newList.findIndex((b, i) => i !== state.activeBossIndex && b.hp > 0);
+      outActiveIdx = nextIdx >= 0 ? nextIdx : state.activeBossIndex;
+      boss = newList[outActiveIdx!] ?? updatedBoss;
+      outBossList = newList;
+    } else {
+      outBossList = newList;
+    }
+  } else {
+    status = nextBossHp <= 0 ? 'won' : state.status;
+  }
+
   const logMessage = missed
     ? `${actor.name}'s ${skill.name} missed.`
     : `${actor.name} used ${skill.name} for ${damage}${critical ? ' CRIT' : ''}.`;
@@ -204,6 +229,7 @@ const resolveHeroStrike = (
     status,
     heroes,
     boss,
+    ...(outBossList ? { bossList: outBossList, activeBossIndex: outActiveIdx } : {}),
     totalDamage: state.totalDamage + damage,
     logs: addLog(state.logs, logMessage, status === 'won' ? 'reward' : 'hero'),
   };
@@ -267,6 +293,122 @@ export const resolveHeroAction = (
   if (afterCooldown.status !== 'active') return afterCooldown;
 
   return advanceHeroAndMaybeBoss(afterCooldown);
+};
+
+// Single hero acts by index without advancing the turn order — caller decides when boss fires.
+export const resolveSpecificHeroAction = (
+  state: BattleState,
+  heroIndex: number,
+  action: BattleAction,
+  selectedSkill?: HeroSkill
+): BattleState => {
+  if (state.status !== 'active') return state;
+
+  const actor = state.heroes[heroIndex];
+  if (!actor || actor.hp <= 0) return state;
+
+  // Defend: not affected by status effects, ticks cooldown
+  if (action === 'defend') {
+    return {
+      ...state,
+      heroes: state.heroes.map((h, idx) =>
+        idx === heroIndex
+          ? { ...h, isDefending: true, skillCooldown: Math.max(0, h.skillCooldown - 1) }
+          : h
+      ),
+      logs: addLog(state.logs, `${actor.name} takes a defensive stance.`, 'hero'),
+    };
+  }
+
+  if (actor.statusEffects.some((e) => e.effectType === 'daze')) {
+    return {
+      ...state,
+      logs: addLog(state.logs, `${actor.name} is dazed and loses their turn!`, 'system'),
+    };
+  }
+
+  const isSilenced = actor.statusEffects.some((e) => e.effectType === 'silence');
+  const isBerserked = actor.statusEffects.some((e) => e.effectType === 'berserk');
+  const forcedToAttack =
+    (isSilenced || isBerserked) && (action === 'skill' || action === 'ultimate');
+
+  let preLog = state.logs;
+  if (forcedToAttack) {
+    const reason = isBerserked ? 'berserk' : 'silenced';
+    preLog = addLog(preLog, `${actor.name} is ${reason}! Falls back to basic attack.`, 'system');
+  }
+
+  const effectiveAction: BattleAction = forcedToAttack
+    ? 'attack'
+    : action === 'skill' && actor.skillCooldown > 0
+      ? 'attack'
+      : action;
+
+  const newCooldown =
+    effectiveAction === 'skill' ? 3 : Math.max(0, actor.skillCooldown - 1);
+
+  const skill = getActionSkill(actor, effectiveAction, selectedSkill);
+  const stateForHero = { ...state, logs: preLog, activeHeroIndex: heroIndex };
+
+  const afterHero =
+    skill.kind === 'heal'
+      ? resolveHeal(stateForHero, actor, skill, effectiveAction)
+      : resolveHeroStrike(stateForHero, actor, skill, effectiveAction);
+
+  return {
+    ...afterHero,
+    heroes: afterHero.heroes.map((h) =>
+      h.id === actor.id ? { ...h, skillCooldown: newCooldown } : h
+    ),
+  };
+};
+
+// All living heroes each do a basic attack, then boss phase — one button press = full round.
+export const resolvePartyAttack = (state: BattleState): BattleState => {
+  if (state.status !== 'active') return state;
+
+  let current = state;
+
+  for (let i = 0; i < current.heroes.length && current.status === 'active'; i++) {
+    const hero = current.heroes[i];
+    if (!hero || hero.hp <= 0) continue;
+
+    if (hero.statusEffects.some((e) => e.effectType === 'daze')) {
+      current = {
+        ...current,
+        logs: addLog(current.logs, `${hero.name} is dazed and loses their turn!`, 'system'),
+      };
+      continue;
+    }
+
+    const skill = getActionSkill(hero, 'attack');
+    const stateForHero = { ...current, activeHeroIndex: i };
+    const afterHero =
+      skill.kind === 'heal'
+        ? resolveHeal(stateForHero, hero, skill, 'attack')
+        : resolveHeroStrike(stateForHero, hero, skill, 'attack');
+
+    current = {
+      ...afterHero,
+      heroes: afterHero.heroes.map((h) =>
+        h.id === hero.id ? { ...h, skillCooldown: Math.max(0, h.skillCooldown - 1) } : h
+      ),
+    };
+  }
+
+  if (current.status !== 'active') return current;
+
+  const firstLiving = current.heroes.findIndex((h) => h.hp > 0);
+  if (firstLiving < 0) return { ...current, status: 'lost' };
+
+  const afterBoss = resolveBossTurnPhase({
+    ...current,
+    activeHeroIndex: firstLiving,
+    round: current.round + 1,
+  });
+
+  const nextLiving = afterBoss.heroes.findIndex((h) => h.hp > 0);
+  return { ...afterBoss, activeHeroIndex: nextLiving >= 0 ? nextLiving : 0 };
 };
 
 export const getActiveHero = (state: BattleState) =>
