@@ -121,6 +121,7 @@ export type PlayerSave = {
   energy: number;
   energyRefillAt: string | null;      // ISO timestamp for when next +1 energy is due
   lastCommunityBoostAt: string | null; // ISO timestamp of last community "agile" boost received
+  lastShipItAt: string | null;          // ISO timestamp of last community "ship it" gold boost
   raidTokens: number;
   heroes: HeroProgress[];
   party: string[];
@@ -187,6 +188,7 @@ export type BattleHero = {
   spd: number;
   charge: number;
   skillCooldown: number;
+  isDefending?: boolean;
   skill: HeroSkill;
   skillOptions: HeroSkill[];
   ultimate: HeroSkill;
@@ -242,4 +244,4 @@ export type BattleState = {
   encounterCount: number;
 };
 
-export type BattleAction = 'attack' | 'skill' | 'ultimate';
+export type BattleAction = 'attack' | 'skill' | 'ultimate' | 'defend';

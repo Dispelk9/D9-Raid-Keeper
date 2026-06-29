@@ -52,7 +52,7 @@ export const App = () => {
     let cancelled = false;
 
     const load = async () => {
-      const loadedSave = await loadKeeperSave(fallbackUsername);
+      const { save: loadedSave } = await loadKeeperSave(fallbackUsername);
 
       if (cancelled) return;
 

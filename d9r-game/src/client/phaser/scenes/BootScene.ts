@@ -79,22 +79,94 @@ export const EFFECT_ASSETS: Array<{ key: EffectKey; path: string }> = [
   },
 ];
 
-export type HeroSpriteConfig = {
-  key: string;
-  frameCount: number;
-  frameW: number;
-  frameH: number;
+// ── Sequential frame animation assets ────────────────────────────────────
+// Helper: inclusive range array
+const _r = (start: number, end: number) => Array.from({ length: end - start + 1 }, (_, i) => start + i);
+const _pad = (n: number) => String(n).padStart(2, '0');
+
+const _a1 = (n: number) => `seq-a1-${_pad(n)}`;
+const _a2 = (n: number) => `seq-a2-${_pad(n)}`;
+const _a3 = (n: number) => `seq-a3-${_pad(n)}`;
+const _cos = (n: number) => `seq-cos-${_pad(n)}`;
+const _fb = (n: number) => `seq-fb-${_pad(n)}`;
+const _lt = (n: number) => `seq-lt-${_pad(n)}`;
+const _wt = (folder: string, n: number) => `seq-wt-${folder}-${_pad(n)}`;
+
+export const SEQ_ASSETS: Array<{ key: string; path: string }> = [
+  // Alternative 1 (all 30 frames across 5 sub-folders)
+  ..._r(1, 30).map(n => ({
+    key: _a1(n),
+    path: `assets/effects/Attack_Effect/Alternative 1/${Math.ceil(n / 6)}/Alternative_1_${_pad(n)}.png`,
+  })),
+  // Alternative 2 (first 6 frames, sub-folder 1 — for automod hero)
+  ..._r(1, 6).map(n => ({
+    key: _a2(n),
+    path: `assets/effects/Attack_Effect/Alternative 2/1/Alternative_2_${_pad(n)}.png`,
+  })),
+  // Alternative 3 (first 18 frames, 3 sub-folders — for boss strikes)
+  ..._r(1, 18).map(n => ({
+    key: _a3(n),
+    path: `assets/effects/Attack_Effect/Alternative 3/${Math.ceil(n / 6)}/Alternative_3_${_pad(n)}.png`,
+  })),
+  // CosmicTimeMagicEffect (25 frames across 5 sub-folders)
+  ..._r(1, 25).map(n => ({
+    key: _cos(n),
+    path: `assets/effects/CosmicTimeMagicEffect/${Math.ceil(n / 5)}/Cosmic_${_pad(n)}.png`,
+  })),
+  // Fireball_Effect_2 (24 flat PNGs)
+  ..._r(1, 24).map(n => ({
+    key: _fb(n),
+    path: `assets/effects/Fireball_Effect_2/Fireball_Effect_${_pad(n)}.png`,
+  })),
+  // LightEffects (25 flat PNGs)
+  ..._r(1, 25).map(n => ({
+    key: _lt(n),
+    path: `assets/effects/LightEffects/LightEffect_${_pad(n)}.png`,
+  })),
+  // Water_Effect (5 sub-folders × 5 frames)
+  ...['01', '02', '03', '04', '05'].flatMap(f =>
+    _r(1, 5).map(n => ({ key: _wt(f, n), path: `assets/effects/Water_Effect/${f}/Water__${_pad(n)}.png` }))
+  ),
+];
+
+// Named sequences — each value is an ordered list of texture keys to display as a flip-book animation
+export const EFFECT_SEQUENCES: Record<string, string[]> = {
+  // Hero basic attack sequences (unique per hero)
+  'hero-atk-frontend-developer': _r(1, 6).map(_a1),
+  'hero-atk-backend-developer':  _r(7, 12).map(_a1),
+  'hero-atk-devops-engineer':    _r(13, 18).map(_a1),
+  'hero-atk-qa-tester':          _r(19, 24).map(_a1),
+  'hero-atk-security-engineer':  _r(25, 30).map(_a1),
+  'hero-atk-data-engineer':      _r(1, 6).map(_a2),
+  // Hero skill effects — Cosmic (5 variants × 5 frames each)
+  'skill-cosmic1': _r(1, 5).map(_cos),
+  'skill-cosmic2': _r(6, 10).map(_cos),
+  'skill-cosmic3': _r(11, 15).map(_cos),
+  'skill-cosmic4': _r(16, 20).map(_cos),
+  'skill-cosmic5': _r(21, 25).map(_cos),
+  // Hero skill effects — full sequences
+  'skill-fire':  _r(1, 24).map(_fb),
+  'skill-light': _r(1, 25).map(_lt),
+  'skill-water': ['01', '02', '03', '04', '05'].flatMap(f => _r(1, 5).map(n => _wt(f, n))),
+  // Boss strike sequences (3 unique patterns cycling through attacks)
+  'boss-strike1': _r(1, 6).map(_a3),
+  'boss-strike2': _r(7, 12).map(_a3),
+  'boss-strike3': _r(13, 18).map(_a3),
 };
 
-// All hero sprites are generated procedurally at runtime (heroSpriteGen.ts).
-// 5 frames × 256×256 per hero — matches COMMON_HERO_POSE_COL.
+export type HeroSpriteConfig = {
+  key: string;
+  frameW: number; // canvas width in px — used for scale maths in heroesLoot
+};
+
+// Each hero has a standalone 512×512 PNG (character ~440 px tall, centred).
 export const HERO_SPRITE_CONFIG: Record<string, HeroSpriteConfig> = {
-  'snoo-vanguard':  { key: 'hero-snoo-vanguard',  frameCount: 5, frameW: 256, frameH: 256 },
-  'karma-duelist':  { key: 'hero-karma-duelist',   frameCount: 5, frameW: 256, frameH: 256 },
-  'flair-archmage': { key: 'hero-flair-archmage',  frameCount: 5, frameW: 256, frameH: 256 },
-  'upvote-ranger':  { key: 'hero-upvote-ranger',   frameCount: 5, frameW: 256, frameH: 256 },
-  'award-sage':     { key: 'hero-award-sage',      frameCount: 5, frameW: 256, frameH: 256 },
-  'automod-oracle': { key: 'hero-automod-oracle',  frameCount: 5, frameW: 256, frameH: 256 },
+  'frontend-developer': { key: 'hero-frontend-developer', frameW: 512 },
+  'backend-developer':  { key: 'hero-backend-developer',  frameW: 512 },
+  'devops-engineer':    { key: 'hero-devops-engineer',     frameW: 512 },
+  'qa-tester':          { key: 'hero-qa-tester',           frameW: 512 },
+  'security-engineer':  { key: 'hero-security-engineer',   frameW: 512 },
+  'data-engineer':      { key: 'hero-data-engineer',       frameW: 512 },
 };
 
 export class BootScene extends Phaser.Scene {

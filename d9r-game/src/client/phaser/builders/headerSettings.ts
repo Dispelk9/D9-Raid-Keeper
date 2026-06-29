@@ -1,6 +1,6 @@
 import type { GameScene } from '../scenes/GameScene';
 import { COLORS, FONT, H, HEADER_H, W, PAD } from '../constants';
-import { DAILY_REWARD, canClaimDailyReward } from '../../../shared/game/logic/progression';
+import { canClaimDailyReward } from '../../../shared/game/logic/progression';
 import type { View } from '../scenes/GameSceneTypes';
 import { fmt } from '../scenes/GameSceneTypes';
 
@@ -22,6 +22,17 @@ export function buildHeader(scene: GameScene): void {
     .setInteractive({ useHandCursor: true })
     .on('pointerdown', () => scene.toggleSettingsPanel());
   objs.push(gear);
+
+  // daily claim icon — next to gear
+  scene.dailyClaimIcon = scene.add
+    .text(PAD + 56, HEADER_H / 2, '🎁', {
+      fontSize: '24px',
+      fontFamily: FONT.emoji,
+    })
+    .setOrigin(0.5)
+    .setInteractive({ useHandCursor: true })
+    .on('pointerdown', () => scene.handleDailyClaim());
+  objs.push(scene.dailyClaimIcon);
 
   // RAID level badge — far right
   const badgeBg = scene.add.graphics();
@@ -66,7 +77,7 @@ export function buildSettingsPanel(scene: GameScene): void {
   const panelX = PAD * 2;
   const panelY = HEADER_H + PAD;
   const panelW = W - PAD * 4;
-  const panelH = 370;
+  const panelH = 270;
 
   const panelBg = scene.add.graphics();
   panelBg.fillStyle(COLORS.white);
@@ -198,76 +209,11 @@ export function buildSettingsPanel(scene: GameScene): void {
   });
   scene.settingsNavBtns = navBtns;
 
-  // Action buttons row
-  const actLblY = navY + navH + PAD * 2;
-  objs.push(
-    scene.add
-      .text(panelX + PAD * 2, actLblY, 'ACTIONS', {
-        fontSize: '9px',
-        fontStyle: 'bold',
-        fontFamily: FONT.sans,
-        color: '#a1a1aa',
-      })
-      .setOrigin(0, 0)
-  );
-
-  const actionBtnY = actLblY + 18;
-  const actionBtnH = 62;
-  const actionBtnW = panelW - PAD * 2; // full width
-
-  scene.dailyActBg = scene.add.graphics();
-  scene.dailyActBg.fillStyle(COLORS.btnGreen);
-  scene.dailyActBg.fillRoundedRect(
-    panelX + PAD,
-    actionBtnY,
-    actionBtnW,
-    actionBtnH,
-    6
-  );
-  objs.push(scene.dailyActBg);
-  scene.dailyActHit = scene.add
-    .rectangle(
-      panelX + PAD + actionBtnW / 2,
-      actionBtnY + actionBtnH / 2,
-      actionBtnW,
-      actionBtnH,
-      0,
-      0
-    )
-    .setInteractive({ useHandCursor: true });
-  scene.dailyActHit.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
-    ptr.event.stopPropagation();
-    scene.handleDailyClaim();
-  });
-  objs.push(scene.dailyActHit);
-  scene.dailyActText = scene.add
-    .text(panelX + PAD + actionBtnW / 2, actionBtnY + 16, 'Daily Reward', {
-      fontSize: '13px',
-      fontStyle: 'bold',
-      fontFamily: FONT.sans,
-      color: '#ffffff',
-    })
-    .setOrigin(0.5);
-  scene.dailyActSubText = scene.add
-    .text(
-      panelX + PAD + actionBtnW / 2,
-      actionBtnY + 36,
-      `+${DAILY_REWARD.gold}🪙  +${DAILY_REWARD.gems}💎  +${DAILY_REWARD.energy}⚡`,
-      {
-        fontSize: '11px',
-        fontStyle: 'bold',
-        fontFamily: FONT.emoji,
-        color: '#dcfce7',
-      }
-    )
-    .setOrigin(0.5);
-  objs.push(scene.dailyActText, scene.dailyActSubText);
-
   objs.push(
     scene.add
       .text(
         panelX + panelW / 2,
-        actionBtnY + actionBtnH + PAD * 2,
+        navY + navH + PAD * 2,
         'tap outside to close',
         {
           fontSize: '11px',
@@ -312,16 +258,10 @@ export function refreshDailyAction(scene: GameScene): void {
   if (!scene.profile) return;
 
   const available = canClaimDailyReward(scene.profile);
-  scene.dailyActBg.setAlpha(available ? 1 : 0.42);
-  scene.dailyActText.setText(available ? 'Daily Reward' : 'Claimed Today');
-  scene.dailyActSubText.setText(
-    available
-      ? `+${DAILY_REWARD.gold}🪙 +${DAILY_REWARD.gems}💎 +${DAILY_REWARD.energy}⚡`
-      : 'Resets tomorrow'
-  );
+  scene.dailyClaimIcon.setAlpha(available ? 1 : 0.35);
   if (available) {
-    scene.dailyActHit.setInteractive({ useHandCursor: true });
+    scene.dailyClaimIcon.setInteractive({ useHandCursor: true });
   } else {
-    scene.dailyActHit.disableInteractive();
+    scene.dailyClaimIcon.disableInteractive();
   }
 }

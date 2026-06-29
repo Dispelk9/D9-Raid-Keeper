@@ -11,7 +11,6 @@ import {
   MINI_BOSS_SECRETARY_KEY,
   MINI_BOSS_SECURITY_KEY,
   RAID_BOSSES,
-  BOSS_SPRITE_FRAMES,
 } from '../data/raidBosses';
 import {
   getHeroProgress,
@@ -19,13 +18,8 @@ import {
   getPartyPower,
   getScaledStats,
 } from './progression';
-import type {
-  BattleHero,
-  BattleState,
-  PlayerSave,
-  RaidBoss,
-} from '../types';
-import { createLogEntry, ULTIMATE_CHARGE } from './combatCalcs';
+import type { BattleHero, BattleState, PlayerSave, RaidBoss } from '../types';
+import { createLogEntry } from './combatCalcs';
 
 export type CreateBattleStateOptions = {
   raidLevel?: number;
@@ -87,15 +81,15 @@ const makeSingleBoss = (
   bossId: string
 ): RaidBoss => {
   const specialSkills =
-    template.specialSkills ?? (template.specialSkill ? [template.specialSkill] : []);
+    template.specialSkills ??
+    (template.specialSkill ? [template.specialSkill] : []);
   const maxHp = Math.round((template.stats.hp + powerBonus / 3) * 1.3);
   return {
     id: `${bossId}-enc${encounterIndex}`,
     name: template.name ?? bossId,
     title: `${slotLabel} · ${encounterIndex}/${encounterCount}`,
     icon: template.icon,
-    spriteKey: 'snoo-bosses-right',
-    spriteFrame: BOSS_SPRITE_FRAMES[bossId] ?? 0,
+    spriteKey: template.spriteKey,
     maxHp,
     hp: maxHp,
     atk: Math.round(template.stats.atk * 3),
@@ -107,7 +101,9 @@ const makeSingleBoss = (
     statusEffects: [],
     isElite: true,
     attackName: template.attackName ?? 'Formation Strike',
-    ...(specialSkills.length > 0 ? { specialSkill: specialSkills[0]!, specialSkills } : {}),
+    ...(specialSkills.length > 0
+      ? { specialSkill: specialSkills[0]!, specialSkills }
+      : {}),
   };
 };
 
@@ -123,17 +119,41 @@ const createRaidBoss = (
 
   // ── Hidden Floor (level 7): true multi-boss — 3 independent bosses ───────
   if (node.isHiddenFloor) {
-    const encBossIds = HIDDEN_FLOOR_ENCOUNTERS[encounterIndex - 1] ?? HIDDEN_FLOOR_ENCOUNTERS[1]!;
+    const encBossIds =
+      HIDDEN_FLOOR_ENCOUNTERS[encounterIndex - 1] ??
+      HIDDEN_FLOOR_ENCOUNTERS[1]!;
     const [id0, id1, id2] = encBossIds;
-    const t0 = RAID_BOSSES.find(b => b.id === id0) ?? RAID_BOSSES[0]!;
-    const t1 = RAID_BOSSES.find(b => b.id === id1) ?? RAID_BOSSES[1]!;
-    const t2 = RAID_BOSSES.find(b => b.id === id2) ?? RAID_BOSSES[2]!;
-    const titles = encounterIndex === 1
-      ? ['Dept. Head', 'Dept. Head', 'Dept. Head']
-      : ['C-Suite', 'C-Suite', 'C-Suite'];
-    const boss0 = makeSingleBoss(t0, encounterIndex, encounterCount, powerBonus, titles[0]!, id0!);
-    const boss1 = makeSingleBoss(t1, encounterIndex, encounterCount, powerBonus, titles[1]!, id1!);
-    const boss2 = makeSingleBoss(t2, encounterIndex, encounterCount, powerBonus, titles[2]!, id2!);
+    const t0 = RAID_BOSSES.find((b) => b.id === id0) ?? RAID_BOSSES[0]!;
+    const t1 = RAID_BOSSES.find((b) => b.id === id1) ?? RAID_BOSSES[1]!;
+    const t2 = RAID_BOSSES.find((b) => b.id === id2) ?? RAID_BOSSES[2]!;
+    const titles =
+      encounterIndex === 1
+        ? ['Dept. Head', 'Dept. Head', 'Dept. Head']
+        : ['C-Suite', 'C-Suite', 'C-Suite'];
+    const boss0 = makeSingleBoss(
+      t0,
+      encounterIndex,
+      encounterCount,
+      powerBonus,
+      titles[0]!,
+      id0!
+    );
+    const boss1 = makeSingleBoss(
+      t1,
+      encounterIndex,
+      encounterCount,
+      powerBonus,
+      titles[1]!,
+      id1!
+    );
+    const boss2 = makeSingleBoss(
+      t2,
+      encounterIndex,
+      encounterCount,
+      powerBonus,
+      titles[2]!,
+      id2!
+    );
     return { boss: boss0, bossList: [boss0, boss1, boss2] };
   }
 
@@ -142,7 +162,8 @@ const createRaidBoss = (
   const specialSkills =
     bossTemplate.specialSkills ??
     (bossTemplate.specialSkill ? [bossTemplate.specialSkill] : []);
-  const levelMultiplier = 1 + (raidLevel - 1) * 0.16 + (encounterIndex - 1) * 0.08;
+  const levelMultiplier =
+    1 + (raidLevel - 1) * 0.16 + (encounterIndex - 1) * 0.08;
   const finalEncounterMultiplier = encounterIndex >= encounterCount ? 1.18 : 1;
   const maxHp = Math.round(
     (bossTemplate.stats.hp + powerBonus) *
@@ -155,7 +176,8 @@ const createRaidBoss = (
 
   // Non-final encounters use a mini-boss sprite instead of the floor boss Snoo
   const isMiniBoss = encounterIndex < encounterCount;
-  const miniBossKey = raidLevel <= 3 ? MINI_BOSS_SECRETARY_KEY : MINI_BOSS_SECURITY_KEY;
+  const miniBossKey =
+    raidLevel <= 3 ? MINI_BOSS_SECRETARY_KEY : MINI_BOSS_SECURITY_KEY;
   const miniBossName = raidLevel <= 3 ? 'Secretary' : 'Security';
   const miniBossTitle = raidLevel <= 3 ? 'Office Gatekeeper' : 'Security Chief';
 
@@ -166,11 +188,6 @@ const createRaidBoss = (
       title: `${isMiniBoss ? miniBossTitle : appearance.title} · Lv ${raidLevel}${encounterLabel}`,
       icon: appearance.icon,
       spriteKey: isMiniBoss ? miniBossKey : appearance.spriteKey,
-      ...(isMiniBoss
-        ? { spriteFrame: 0 }
-        : typeof appearance.spriteFrame === 'number'
-          ? { spriteFrame: appearance.spriteFrame }
-          : {}),
       maxHp,
       hp: maxHp,
       atk: Math.round(bossTemplate.stats.atk * levelMultiplier),

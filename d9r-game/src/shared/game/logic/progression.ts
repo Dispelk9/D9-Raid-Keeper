@@ -59,6 +59,7 @@ export const createInitialPlayerSave = (username: string): PlayerSave => ({
   energy: 100,
   energyRefillAt: null,
   lastCommunityBoostAt: null,
+  lastShipItAt: null,
   raidTokens: 0,
   // All heroes unlocked from the start — no roll/recruit needed.
   heroes: HEROES.map((hero) => ({
@@ -74,7 +75,9 @@ export const createInitialPlayerSave = (username: string): PlayerSave => ({
   totalRaidDamage: 0,
   bestRaidDamage: 0,
   dailyClaimedAt: null,
-  updatedAt: new Date().toISOString(),
+  // Use epoch so a fresh initial save always loses the timestamp comparison
+  // against any real local save (see loadKeeperSave in api.ts)
+  updatedAt: '2000-01-01T00:00:00.000Z',
 });
 
 export const normalizePlayerSave = (save: PlayerSave): PlayerSave => {
@@ -113,6 +116,7 @@ export const normalizePlayerSave = (save: PlayerSave): PlayerSave => {
     party,
     energyRefillAt: save.energyRefillAt ?? null,
     lastCommunityBoostAt: save.lastCommunityBoostAt ?? null,
+    lastShipItAt: save.lastShipItAt ?? null,
     inventory: save.inventory.map((item) => ({
       ...item,
       bonusLevel: item.bonusLevel ?? 0,
@@ -507,7 +511,7 @@ export const getPartyPower = (save: PlayerSave) =>
 
     const progress = getHeroProgress(save, heroId);
     const stats = getScaledStats(template, progress.level);
-    const lootDamageBonus = getLootDamageBonus(save);
+    const lootDamageBonus = getLootDamageBonus(save, heroId);
 
     return (
       total +

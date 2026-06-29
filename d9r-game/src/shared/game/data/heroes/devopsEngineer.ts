@@ -1,7 +1,7 @@
 import type { HeroTemplate } from '../../types';
 
 export const devopsEngineer: HeroTemplate = {
-  id: 'flair-archmage',
+  id: 'devops-engineer',
   name: 'DevOps Engineer',
   title: 'Pipeline Warden',
   role: 'DevOps',

@@ -1,7 +1,7 @@
 import type { HeroTemplate } from '../../types';
 
 export const dataEngineer: HeroTemplate = {
-  id: 'automod-oracle',
+  id: 'data-engineer',
   name: 'Data Engineer',
   title: 'Warehouse Medic',
   role: 'Data',

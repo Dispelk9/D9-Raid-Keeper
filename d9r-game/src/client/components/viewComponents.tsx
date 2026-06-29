@@ -1,6 +1,5 @@
 import { HEROES } from '../../shared/game/data/heroes';
 import {
-  canClaimDailyReward,
   canUpgradeHero,
   getHeroProgress,
   getScaledStats,

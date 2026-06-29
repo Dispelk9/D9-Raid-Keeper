@@ -11,15 +11,30 @@ export type View = 'title' | 'map' | 'party' | 'raid' | 'heroes' | 'loot' | 'hel
 
 export type HeroSlotRef = {
   icon: Phaser.GameObjects.Image;
+  hpBarFill: Phaser.GameObjects.Rectangle;
+  lbBarFill: Phaser.GameObjects.Rectangle;
   hpText: Phaser.GameObjects.Text;
   lbText: Phaser.GameObjects.Text;
-  objects: Array<Phaser.GameObjects.Image | Phaser.GameObjects.Text>;
+  objects: Array<Phaser.GameObjects.GameObject>;
   iconCX: number;
   iconCY: number;
   sx: number;
   sy: number;
   sw: number;
   sh: number;
+  // Cell-level hit area (clicking anywhere above the buttons = attack)
+  cellHit: Phaser.GameObjects.Rectangle;
+  // Per-hero action buttons: SKL, LMT, DEFEND
+  defBg: Phaser.GameObjects.Rectangle;
+  defText: Phaser.GameObjects.Text;
+  sklBg: Phaser.GameObjects.Rectangle;
+  sklText: Phaser.GameObjects.Text;
+  lmtBg: Phaser.GameObjects.Rectangle;
+  lmtText: Phaser.GameObjects.Text;
+  // Dim overlay shown when the hero has already acted this round
+  actedDim: Phaser.GameObjects.Rectangle;
+  // Shield icon overlay shown while hero.isDefending is true
+  shieldIcon: Phaser.GameObjects.Text;
 };
 
 export type HeroCardRef = {
@@ -72,8 +87,6 @@ export type SkillChoiceRef = {
 
 export type MultiBossRef = {
   image: Phaser.GameObjects.Image;
-  hpFill: Phaser.GameObjects.Rectangle;
-  hpText: Phaser.GameObjects.Text;
   nameText: Phaser.GameObjects.Text;
   hitArea: Phaser.GameObjects.Rectangle;
   ring: Phaser.GameObjects.Graphics;
@@ -85,26 +98,28 @@ export type BossAttackCue = Pick<
 >;
 
 // ── Layout constants ──────────────────────────────────────────────────────
-export const GAME_Y = HEADER_H + PAD; // 60
-export const STAGE_X = PAD; // 8
-export const STAGE_Y = GAME_Y; // 60
-export const STAGE_W = W - PAD * 2; // 414
+export const GAME_Y = HEADER_H + PAD;        // 60
+export const STAGE_X = PAD;                  // 8
+export const STAGE_Y = GAME_Y;               // 60
+export const STAGE_W = W - PAD * 2;          // 414
 export const STAGE_H = 540;
 export const INFO_BAR_H = 52;
-export const ACTION_H = 64;
-// Gap between the boss-HP bar and the first hero slot — skill banners appear here
 export const BANNER_ZONE_H = 48;
-export const BOSS_AREA_W = Math.floor(STAGE_W * 0.52);
-export const HERO_AREA_X = STAGE_X + BOSS_AREA_W + PAD;
-export const HERO_AREA_W = STAGE_W - BOSS_AREA_W - PAD;
-export const CONTENT_H = STAGE_H - INFO_BAR_H - BANNER_ZONE_H - PAD - ACTION_H - PAD * 2;
-export const HERO_SLOT_H = Math.floor((CONTENT_H - 4 * 5) / 5);
-export const HERO_SPRITE_SIZE = 72;
-export const HERO_BAR_X_OFF = HERO_SPRITE_SIZE - 2;
+
+// Boss content area (full-width, below info bar + banner zone)
+export const BOSS_CONTENT_H = 204;
+// 2×2 hero grid below the boss area
+export const HERO_GRID_Y = STAGE_Y + INFO_BAR_H + BANNER_ZONE_H + BOSS_CONTENT_H; // 364
+export const HERO_GRID_H = STAGE_H - INFO_BAR_H - BANNER_ZONE_H - BOSS_CONTENT_H; // 236
+export const HERO_CELL_W = Math.floor(STAGE_W / 2);                                 // 207
+export const HERO_CELL_H = Math.floor(HERO_GRID_H / 2);                             // 118
+
+// Maximum party size
+export const MAX_PARTY = 4;
+
+export const HERO_SPRITE_SIZE = 80; // display size in the grid cell
 export const STATS_BAR_Y = STAGE_Y + STAGE_H + PAD;
-export const HERO_FRAME_DISPLAY_W = 70;
-export const HERO_FRAME_DISPLAY_H = 70;
-export const FALLBACK_HERO_ID = 'snoo-vanguard';
+export const FALLBACK_HERO_ID = 'frontend-developer';
 export const ENERGY_COST = 10;
 
 export const COMMON_HERO_POSE_COL: Record<HeroPose, number> = {

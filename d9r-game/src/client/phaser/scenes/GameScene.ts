@@ -1,8 +1,7 @@
 import Phaser from 'phaser';
 import { context } from '@devvit/web/client';
-import { COLORS, FONT, H, PAD, W } from '../constants';
+import { COLORS, FONT, H, W } from '../constants';
 import {
-  EFFECT_KEYS,
   type EffectKey,
   HERO_SPRITE_CONFIG,
 } from './BootScene';
@@ -19,8 +18,8 @@ import type {
   RewardBundle,
 } from '../../../shared/game/types';
 
-import type { View, HeroSlotRef, HeroCardRef, MapNodeRef, PartyHeroRef, RaidRun, SkillChoiceRef, BossAttackCue, MultiBossRef } from './GameSceneTypes';
-import { GAME_Y, STAGE_X, STAGE_Y, STAGE_W, STAGE_H, INFO_BAR_H, ACTION_H, BANNER_ZONE_H, BOSS_AREA_W, HERO_AREA_X, HERO_AREA_W, CONTENT_H, HERO_SLOT_H, HERO_SPRITE_SIZE, HERO_BAR_X_OFF, STATS_BAR_Y, HERO_FRAME_DISPLAY_W, HERO_FRAME_DISPLAY_H, FALLBACK_HERO_ID, ENERGY_COST, COMMON_HERO_POSE_COL, DEVOPS_HERO_POSE_COL, fmt, fmtCompact, clamp } from './GameSceneTypes';
+import type { View, HeroSlotRef, HeroCardRef, MapNodeRef, PartyHeroRef, RaidRun, SkillChoiceRef, MultiBossRef } from './GameSceneTypes';
+import { STAGE_X, STAGE_Y, STAGE_W, STAGE_H, FALLBACK_HERO_ID, ENERGY_COST } from './GameSceneTypes';
 
 import { buildTitleView, buildMapView } from '../builders/mapView';
 import { buildPartyView, buildHelpView } from '../builders/partyHelpView';
@@ -30,8 +29,8 @@ import { buildResultOverlay, buildSkillChoiceOverlay, buildNewGameConfirmOverlay
 import { buildHeroesView, buildDetailSheet, buildLootView } from '../builders/heroesLoot';
 import { refreshBoss, refreshHeroSlots, refreshButtons, refreshBattleLog } from '../refresh/battle';
 import { refreshHeader, getOwnedHeroIds, refreshRaidPanel, refreshMap, refreshPartySelect, refreshRaid, refreshResultOverlay, refreshHeroes, refreshLoot } from '../refresh/views';
-import { handleAction, spawnEffectSprite, animateBossDefeat, showHeroSkillBanner } from '../handlers/actions';
-import { handleContinue, handleStartRaid, showBattleTransition, openPartySelect, toggleSelectedPartyHero, showDetail, hideDetail, openSkillChoice, hideSkillChoice, chooseSkill, showNewGameConfirm, hideNewGameConfirm, confirmNewGame, handleDailyClaim, handleToggleParty, handleUpgrade, handleGemUpgrade, handleLootUpgrade, moveMapSelection, handleSellLoot, handleEquipLoot, handleUnequipLoot } from '../handlers/navigation';
+import { handleAction, handleHeroAction, spawnEffectSprite, animateBossDefeat, showHeroSkillBanner } from '../handlers/actions';
+import { handleContinue, handleStartRaid, showBattleTransition, openPartySelect, toggleSelectedPartyHero, showDetail, hideDetail, openSkillChoice, hideSkillChoice, chooseSkill, showNewGameConfirm, hideNewGameConfirm, confirmNewGame, handleDailyClaim, handleToggleParty, handleUpgrade, handleGemUpgrade, handleLootUpgrade, moveMapSelection, handleSellLoot, handleEquipLoot, handleUnequipLoot, showLootDetail, hideLootDetail } from '../handlers/navigation';
 
 export class GameScene extends Phaser.Scene {
   // State
@@ -130,13 +129,16 @@ export class GameScene extends Phaser.Scene {
   activeHighlight!: Phaser.GameObjects.Graphics;
   activeTween: Phaser.Tweens.Tween | null = null;
 
-  // Action buttons
-  attackBtnBg!: Phaser.GameObjects.Rectangle;
-  attackBtnText!: Phaser.GameObjects.Text;
-  skillBtnBg!: Phaser.GameObjects.Rectangle;
-  skillBtnText!: Phaser.GameObjects.Text;
-  ultBtnBg!: Phaser.GameObjects.Rectangle;
-  ultBtnText!: Phaser.GameObjects.Text;
+  // Per-hero acted flags; reset each round after boss phase
+  heroActedThisRound: boolean[] = [false, false, false, false];
+  // Pending hero index when skill-choice overlay is open
+  pendingSkillHeroIndex = -1;
+
+  // Chain tracking (live — updates on each hero action)
+  chainLastHitMs = 0;
+  chainHitCount = 0;
+  chainDisplayRef: Phaser.GameObjects.Text | null = null;
+  chainFadeTimer: Phaser.Time.TimerEvent | null = null;
 
   // Battle log
   battleLogLines: Phaser.GameObjects.Text[] = [];
@@ -145,10 +147,9 @@ export class GameScene extends Phaser.Scene {
   // Settings panel
   settingsCurrTexts: Phaser.GameObjects.Text[] = [];
   settingsNavBtns: Phaser.GameObjects.Rectangle[] = [];
-  dailyActBg!: Phaser.GameObjects.Graphics;
-  dailyActHit!: Phaser.GameObjects.Rectangle;
-  dailyActText!: Phaser.GameObjects.Text;
-  dailyActSubText!: Phaser.GameObjects.Text;
+
+  // Header daily-claim icon
+  dailyClaimIcon!: Phaser.GameObjects.Text;
 
   // Result overlay
   resultStatusText!: Phaser.GameObjects.Text;
@@ -182,6 +183,11 @@ export class GameScene extends Phaser.Scene {
   // Loot view
   lootStatTexts: Phaser.GameObjects.Text[] = [];
   lootItemsGroup!: Phaser.GameObjects.Container;
+  lootDetailGroup!: Phaser.GameObjects.Container;
+  selectedLootItemId: string | null = null;
+  lootScrollY = 0;
+  lootScrollMax = 0;
+  lootItemsGroupBaseY = 0;
 
   constructor() {
     super({ key: 'Game' });
@@ -217,14 +223,26 @@ export class GameScene extends Phaser.Scene {
     this.buildSkillChoiceOverlay();
     this.buildNewGameConfirmOverlay();
 
+    // Wheel scroll for loot item grid
+    this.input.on('wheel', (_ptr: Phaser.Input.Pointer, _objs: Phaser.GameObjects.GameObject[], _dx: number, dy: number) => {
+      if (this.view !== 'loot' || this.selectedLootItemId !== null) return;
+      this.lootScrollY = Math.max(0, Math.min(this.lootScrollMax, this.lootScrollY + dy * 0.5));
+      this.lootItemsGroup.setY(this.lootItemsGroupBaseY - this.lootScrollY);
+    });
+
     this.setView('title');
 
-    const { save, communityBoost } = await loadKeeperSave(this.username);
+    const { save, communityBoost, shipItBoost } = await loadKeeperSave(this.username);
     this.profile = save;
-    this.selectedParty = this.profile.party.slice(0, 5);
+    this.selectedParty = this.profile.party.slice(0, 4);
     if (communityBoost) {
       this.time.delayedCall(1500, () =>
         this.showNotification('Community typed "agile"! +10 ⚡ Energy for everyone!')
+      );
+    }
+    if (shipItBoost) {
+      this.time.delayedCall(1800, () =>
+        this.showNotification('Community shipped it! +200 💰 Gold for everyone!')
       );
     }
     this.refreshAll();
@@ -245,9 +263,11 @@ export class GameScene extends Phaser.Scene {
     this.helpGroup.setVisible(v === 'help');
     this.headerGroup.setVisible(!['title', 'help'].includes(v));
     if (v !== 'heroes') this.hideDetail();
+    if (v !== 'loot') this.hideLootDetail();
     if (v !== 'raid') this.hideSkillChoice();
     if (v !== 'title') this.hideNewGameConfirm();
     if (v !== 'raid') this.resultGroup?.setVisible(false);
+    if (v === 'loot') { this.lootScrollY = 0; }
     if (v === 'map') {
       this.refreshMap();
       void loadRaidStatus().then((raid) => {
@@ -303,7 +323,7 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  showEncounterBanner(index: number, total: number) {
+  showEncounterBanner(index: number, total: number, onCovered?: () => void) {
     // Phase 1: black curtain slides in from left, covering the battle field.
     const curtain = this.add
       .rectangle(STAGE_X, STAGE_Y + STAGE_H / 2, 0, STAGE_H, 0x000000)
@@ -316,7 +336,10 @@ export class GameScene extends Phaser.Scene {
       duration: 260,
       ease: 'Sine.In',
       onComplete: () => {
-        // Phase 2: show battle counter on top of the battle field curtain.
+        // Swap scene state while the screen is black
+        onCovered?.();
+
+        // Phase 2: show battle counter on top of the curtain.
         const text = this.add
           .text(STAGE_X + STAGE_W / 2, STAGE_Y + STAGE_H / 2, `Battle  ${index} / ${total}`, {
             fontSize: '24px',
@@ -363,33 +386,20 @@ export class GameScene extends Phaser.Scene {
     return this.getHeroSpriteConfig(heroId).key;
   }
 
-  getHeroPoseColumn(heroId: string, pose: HeroPose) {
-    const config = this.getHeroSpriteConfig(heroId);
-    const poseMap =
-      config.frameCount >= 6 ? DEVOPS_HERO_POSE_COL : COMMON_HERO_POSE_COL;
-
-    return Math.min(poseMap[pose], config.frameCount - 1);
-  }
-
   setHeroPose(
     image: Phaser.GameObjects.Image,
     heroId: string,
-    pose: HeroPose
+    _pose: HeroPose
   ) {
     const config = this.getHeroSpriteConfig(heroId);
-    const col = this.getHeroPoseColumn(heroId, pose);
-    image.setTexture(config.key, col);
-    // Crop to a square from the top of the frame (head + upper body).
-    // Hero frames are 256×1024 (1:4 ratio); without this crop they render
-    // severely squished when displayed in a square slot.
-    image.setCrop(0, 0, config.frameW, config.frameW);
+    image.setTexture(config.key);
   }
 
   // ══════════════════════════════════════════════════════════════════════
   // Energy regen timer
   // ══════════════════════════════════════════════════════════════════════
 
-  update(_time: number, delta: number) {
+  override update(_time: number, delta: number) {
     if (!this.profile || this.profile.energy >= 100 || !this.profile.energyRefillAt) return;
     this.energyUpdateAccum += delta;
     if (this.energyUpdateAccum >= 1000) {
@@ -461,6 +471,9 @@ export class GameScene extends Phaser.Scene {
   handleAction(action: BattleAction, selectedSkill?: HeroSkill, skillChoiceIndex = 0) {
     handleAction(this, action, selectedSkill, skillChoiceIndex);
   }
+  handleHeroAction(heroIndex: number, action: BattleAction, selectedSkill?: HeroSkill) {
+    handleHeroAction(this, heroIndex, action, selectedSkill);
+  }
   showHeroSkillBanner(skillName: string, onComplete: () => void) {
     showHeroSkillBanner(this, skillName, onComplete);
   }
@@ -476,7 +489,7 @@ export class GameScene extends Phaser.Scene {
   toggleSelectedPartyHero(heroId: string) { toggleSelectedPartyHero(this, heroId); }
   showDetail(heroId: string) { showDetail(this, heroId); }
   hideDetail() { hideDetail(this); }
-  openSkillChoice() { openSkillChoice(this); }
+  openSkillChoice(heroIndex?: number) { openSkillChoice(this, heroIndex); }
   hideSkillChoice() { hideSkillChoice(this); }
   chooseSkill(index: number) { chooseSkill(this, index); }
   showNewGameConfirm() { showNewGameConfirm(this); }
@@ -489,6 +502,8 @@ export class GameScene extends Phaser.Scene {
   handleSellLoot(itemId: string) { handleSellLoot(this, itemId); }
   handleEquipLoot(heroId: string, itemId: string) { handleEquipLoot(this, heroId, itemId); }
   handleUnequipLoot(itemId: string) { handleUnequipLoot(this, itemId); }
+  showLootDetail(itemId: string) { showLootDetail(this, itemId); }
+  hideLootDetail() { hideLootDetail(this); }
   handleBossTarget(index: number): void {
     if (!this.battle?.bossList) return;
     const targetBoss = this.battle.bossList[index];

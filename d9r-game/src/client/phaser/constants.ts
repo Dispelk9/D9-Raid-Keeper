@@ -30,6 +30,7 @@ export const COLORS = {
   btnPrimary: 0x18181b,
   btnSkill: 0xf97316,
   btnUlt: 0x4f46e5,
+  btnDefend: 0x0891b2,
   btnDisabled: 0xa1a1aa,
   btnGreen: 0x059669,
 

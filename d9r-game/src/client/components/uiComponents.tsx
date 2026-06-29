@@ -22,12 +22,9 @@ export const getRarityClassName = (rarity: HeroTemplate['rarity']) => {
 };
 
 export const getRoleSpriteClassName = (role: HeroRole) => {
-  if (role === 'Tank') return 'hero-tank';
-  if (role === 'Warrior') return 'hero-warrior';
-  if (role === 'Mage') return 'hero-mage';
-  if (role === 'Ranger') return 'hero-ranger';
-  if (role === 'Support') return 'hero-support';
-
+  if (role === 'Backend' || role === 'Security') return 'hero-warrior';
+  if (role === 'DevOps') return 'hero-tank';
+  if (role === 'Frontend' || role === 'QA') return 'hero-mage';
   return 'hero-healer';
 };
 

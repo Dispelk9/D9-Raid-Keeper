@@ -47,10 +47,9 @@ export function buildHeroCard(
 
   const iconT = scene.add
     .image(cx, cy, scene.getHeroSpriteKey(hero.id))
+    .setDisplaySize(spriteSize, spriteSize)
     .setOrigin(0.5);
   scene.setHeroPose(iconT, hero.id, 'idle');
-  const heroConfig = scene.getHeroSpriteConfig(hero.id);
-  iconT.setScale(spriteSize / heroConfig.frameW);
 
   const nameText = scene.add
     .text(textX, y + 10, hero.name, {
@@ -63,7 +62,7 @@ export function buildHeroCard(
     .setOrigin(0, 0);
 
   const levelText = scene.add
-    .text(textX, y + 29, `${hero.role} · Lv 1`, {
+    .text(textX, y + 29, 'Lv 1', {
       fontSize: '10px',
       fontFamily: FONT.sans,
       color: '#71717a',
@@ -207,9 +206,9 @@ export function buildDetailSheet(scene: GameScene): void {
 
   scene.detailHeroIcon = scene.add
     .image(PAD * 2 + 28, sheetY + 28, scene.getHeroSpriteKey(FALLBACK_HERO_ID))
+    .setDisplaySize(64, 64)
     .setOrigin(0.5);
   scene.setHeroPose(scene.detailHeroIcon, FALLBACK_HERO_ID, 'idle');
-  scene.detailHeroIcon.setScale(64 / scene.getHeroSpriteConfig(FALLBACK_HERO_ID).frameW);
   objs.push(scene.detailHeroIcon);
 
   // Hero name / role / rarity
@@ -365,6 +364,21 @@ export function buildDetailSheet(scene: GameScene): void {
     .setVisible(false);
 }
 
+export const EQUIPMENT_ICONS: Record<string, string> = {
+  'usb-debug-stick':        '💾',
+  'mechanical-keyboard':    '⌨️',
+  'company-macbook':        '💻',
+  'standing-desk':          '🪑',
+  'noise-canceling-hoodie': '🧥',
+  'lucky-deploy-pen':       '✒️',
+  'root-access-yubikey':    '🔑',
+};
+
+export function getEquipmentIcon(itemId: string): string {
+  const baseId = itemId.replace(/-\d+$/, '');
+  return EQUIPMENT_ICONS[baseId] ?? '📦';
+}
+
 export function buildLootView(scene: GameScene): void {
   const topY = GAME_Y + PAD;
   const tileW = (W - PAD * 3) / 2;
@@ -404,6 +418,11 @@ export function buildLootView(scene: GameScene): void {
   scene.lootStatTexts = statTexts;
 
   const itemsStartY = topY + (tileH + PAD) * 2 + PAD;
+  scene.lootItemsGroupBaseY = itemsStartY;
   scene.lootItemsGroup = scene.add.container(0, itemsStartY);
   scene.lootGroup.add(scene.lootItemsGroup);
+
+  // Detail overlay — populated dynamically on tile tap, sits above all items
+  scene.lootDetailGroup = scene.add.container(0, 0).setDepth(10).setVisible(false);
+  scene.lootGroup.add(scene.lootDetailGroup);
 }

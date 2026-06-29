@@ -5,8 +5,7 @@ export const techLead: RaidBossTemplate = {
   name: 'Tech Lead',
   title: 'Architecture Gatekeeper',
   icon: 'TL',
-  spriteKey: 'snoo-bosses-right',
-  spriteFrame: 2,
+  spriteKey: 'boss-tech-lead',
   stats: {
     hp: 650,
     atk: 29,

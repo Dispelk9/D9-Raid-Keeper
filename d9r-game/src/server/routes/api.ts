@@ -39,7 +39,8 @@ const parseSaveRequest = (value: unknown): KeeperSaveRequest | null => {
   return { save: normalizePlayerSave(value.save) };
 };
 
-const COMMUNITY_BOOST_KEY = 'community:agile:boostedAt';
+const COMMUNITY_BOOST_KEY  = 'community:agile:boostedAt';
+const COMMUNITY_SHIPIT_KEY = 'community:shipit:boostedAt';
 
 api.get('/keeper', async (c) => {
   try {
@@ -62,8 +63,20 @@ api.get('/keeper', async (c) => {
       communityBoost = true;
     }
 
+    // Apply community "ship it" gold boost if not yet received
+    let shipItBoost = false;
+    const shipItTimestamp = await redis.get(COMMUNITY_SHIPIT_KEY);
+    if (shipItTimestamp && shipItTimestamp !== save.lastShipItAt) {
+      save = {
+        ...save,
+        gold: save.gold + 200,
+        lastShipItAt: shipItTimestamp,
+      };
+      shipItBoost = true;
+    }
+
     await redis.set(getSaveKey(username), JSON.stringify(save));
-    return c.json<KeeperLoadResponse>({ status: 'ok', save, communityBoost });
+    return c.json<KeeperLoadResponse>({ status: 'ok', save, communityBoost, shipItBoost });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to load player save';
     return c.json<ApiErrorResponse>({ status: 'error', message }, 500);

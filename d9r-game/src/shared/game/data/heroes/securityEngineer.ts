@@ -1,7 +1,7 @@
 import type { HeroTemplate } from '../../types';
 
 export const securityEngineer: HeroTemplate = {
-  id: 'award-sage',
+  id: 'security-engineer',
   name: 'Security Engineer',
   title: 'Incident Guardian',
   role: 'Security',

@@ -16,10 +16,12 @@ type CommentSubmitRequest = {
 
 export const triggers = new Hono();
 
-const COMMUNITY_BOOST_KEY = 'community:agile:boostedAt';
+const COMMUNITY_BOOST_KEY   = 'community:agile:boostedAt';
+const COMMUNITY_SHIPIT_KEY  = 'community:shipit:boostedAt';
 
 // Each comment on a game post rewards the commenter with 300 gold, driving engagement.
-// Typing "agile" (case-insensitive) grants +10 energy to ALL users on their next load.
+// "agile"   → +10 energy for ALL players on next load.
+// "ship it" → +200 gold for ALL players on next load.
 triggers.post('/on-comment-submit', async (c) => {
   try {
     const input = await c.req.json<CommentSubmitRequest>();
@@ -37,6 +39,15 @@ triggers.post('/on-comment-submit', async (c) => {
       });
     }
 
+    // Community "ship it" command: broadcast +200 gold to all players on next load
+    if (commentBody === 'ship it') {
+      await redis.set(COMMUNITY_SHIPIT_KEY, new Date().toISOString());
+      return c.json<TriggerResponse>({
+        status: 'success',
+        message: `Community gold boost activated by ${username}`,
+      });
+    }
+
     const saveKey = `raid-keeper:save:${username}`;
     const raw     = await redis.get(saveKey);
     const parsed: unknown = raw ? JSON.parse(raw) : null;
@@ -44,6 +55,7 @@ triggers.post('/on-comment-submit', async (c) => {
     const save = existing ?? createInitialPlayerSave(username);
 
     save.gold = (save.gold ?? 0) + 300;
+    save.updatedAt = new Date().toISOString();
     await redis.set(saveKey, JSON.stringify(save));
 
     return c.json<TriggerResponse>({

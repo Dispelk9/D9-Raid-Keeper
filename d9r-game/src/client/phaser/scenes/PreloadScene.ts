@@ -1,12 +1,11 @@
 import Phaser from 'phaser';
-import { BOSS_SPRITE_MAP, SNOO_BOSS_RIGHT_KEY } from '../../../shared/game/data/raidBosses';
+import { BOSS_SPRITE_MAP } from '../../../shared/game/data/raidBosses';
 import { COLORS, FONT, H, W } from '../constants';
-import { generateAllHeroSprites } from '../heroSpriteGen';
-import { generateMiniBossSprites } from '../miniBossSpriteGen';
 import {
   EFFECT_ASSETS,
+  SEQ_ASSETS,
+  HERO_SPRITE_CONFIG,
   HUD_KEY,
-  SNOO_FRAME_SIZE,
   TITLE_SCREEN_KEY,
 } from './BootScene';
 
@@ -69,33 +68,44 @@ export class PreloadScene extends Phaser.Scene {
       'assets/backgrounds/Battle-background-hazy-hills-files/PNG/HUD.png'
     );
 
-    // ── Boss sprites ───────────────────────────────────────────────────────
-    Object.entries(BOSS_SPRITE_MAP).forEach(([key, path]) => {
-      this.load.image(key, path.startsWith('/') ? path.slice(1) : path);
-    });
-
-    this.load.spritesheet(
-      SNOO_BOSS_RIGHT_KEY,
-      'assets/sprites/bosses/Snoo_bosses_right.png',
-      { frameWidth: SNOO_FRAME_SIZE, frameHeight: SNOO_FRAME_SIZE }
+    // ── Hero sprites (individual 512×512 PNGs, one per hero) ────────────
+    const HERO_FILES: Record<string, string> = {
+      'hero-frontend-developer':
+        'assets/sprites/heroes/boy_frontend_developer.png',
+      'hero-backend-developer':
+        'assets/sprites/heroes/girl_backend_developer.png',
+      'hero-devops-engineer': 'assets/sprites/heroes/girl_devops_engineer.png',
+      'hero-qa-tester': 'assets/sprites/heroes/boy_qa_tester.png',
+      'hero-security-engineer':
+        'assets/sprites/heroes/girl_security_engineer.png',
+      'hero-data-engineer': 'assets/sprites/heroes/man_data_engineer.png',
+    };
+    Object.entries(HERO_FILES).forEach(([key, path]) =>
+      this.load.image(key, path)
     );
+
+    // ── Boss & mini-boss sprites (individual PNGs) ────────────────────────
+    Object.entries(BOSS_SPRITE_MAP).forEach(([key, path]) => {
+      this.load.image(key, path);
+    });
 
     // ── Battle effects ────────────────────────────────────────────────────
     EFFECT_ASSETS.forEach(({ key, path }) => {
       this.load.image(key, path);
     });
+    SEQ_ASSETS.forEach(({ key, path }) => {
+      this.load.image(key, path);
+    });
   }
 
   create() {
-    // Generate all hero + mini-boss sprites procedurally (no image files needed)
-    generateAllHeroSprites(this);
-    generateMiniBossSprites(this);
-
     const nearest = Phaser.Textures.FilterMode.NEAREST;
+    Object.values(HERO_SPRITE_CONFIG).forEach(({ key }) => {
+      this.textures.get(key).setFilter(nearest);
+    });
     Object.keys(BOSS_SPRITE_MAP).forEach((key) => {
       this.textures.get(key).setFilter(nearest);
     });
-    this.textures.get(SNOO_BOSS_RIGHT_KEY).setFilter(nearest);
 
     this.scene.start('Game');
   }

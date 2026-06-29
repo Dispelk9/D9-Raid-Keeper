@@ -9,6 +9,7 @@ export type KeeperLoadResponse = {
   status: 'ok';
   save: PlayerSave;
   communityBoost?: boolean;
+  shipItBoost?: boolean;
 };
 
 export type KeeperSaveRequest = {
