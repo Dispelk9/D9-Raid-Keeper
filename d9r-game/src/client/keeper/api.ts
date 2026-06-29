@@ -45,9 +45,18 @@ export const loadKeeperSave = async (fallbackUsername: string): Promise<{ save: 
         const localSave  = loadLocalSave(fallbackUsername);
         // Prefer whichever save is more recent — guards against stale server data
         // when a previous POST failed (e.g. dev-server restart cleared Redis)
-        const save = localSave && localSave.updatedAt > serverSave.updatedAt
-          ? localSave
-          : serverSave;
+        const preferLocal = Boolean(localSave && localSave.updatedAt > serverSave.updatedAt);
+        // When localSave wins the timestamp merge, server-applied boost increments aren't
+        // reflected in it yet — re-apply them so the caller always gets the gold/energy.
+        let save = preferLocal ? localSave! : serverSave;
+        if (preferLocal) {
+          if (data.communityBoost) {
+            save = { ...save, energy: Math.min(100, save.energy + 10), lastCommunityBoostAt: serverSave.lastCommunityBoostAt };
+          }
+          if (data.shipItBoost) {
+            save = { ...save, gold: save.gold + 200, lastShipItAt: serverSave.lastShipItAt };
+          }
+        }
         storeLocalSave(save);
         return { save, communityBoost: data.communityBoost ?? false, shipItBoost: data.shipItBoost ?? false };
       }

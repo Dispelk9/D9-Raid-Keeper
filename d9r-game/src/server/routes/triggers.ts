@@ -55,6 +55,7 @@ triggers.post('/on-comment-submit', async (c) => {
     const save = existing ?? createInitialPlayerSave(username);
 
     save.gold = (save.gold ?? 0) + 300;
+    save.updatedAt = new Date().toISOString();
     await redis.set(saveKey, JSON.stringify(save));
 
     return c.json<TriggerResponse>({
