@@ -21,7 +21,7 @@ import {
   canUpgradeHeroWithGem,
   getEffectiveHeroRarity,
   getHeroProgress,
-  getLootDamageBonus,
+  getLootStatBonuses,
   isHeroFullyUpgraded,
   getEquippedHeroId,
 } from '../../../shared/game/logic/progression';
@@ -437,7 +437,8 @@ export function refreshHeroes(scene: GameScene): void {
 
 export function refreshLoot(scene: GameScene): void {
   if (!scene.profile) return;
-  const totalBonus = getLootDamageBonus(scene.profile);
+  const lootBonuses = getLootStatBonuses(scene.profile);
+  const totalBonus = Object.values(lootBonuses).reduce((s, v) => s + (v ?? 0), 0);
   const vals = [
     fmt(scene.profile.bestRaidDamage),
     fmt(scene.profile.totalRaidDamage),

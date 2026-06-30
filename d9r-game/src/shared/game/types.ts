@@ -110,7 +110,8 @@ export type EquipmentItem = {
   rarity: HeroRarity;
   stat: keyof StatBlock;
   bonus: number;
-  bonusLevel?: number; // 0–10 token upgrades applied
+  bonusLevel?: number;   // 0–10 token upgrades applied
+  extraStats?: Partial<StatBlock>; // secondary/tertiary stat bonuses (Rare+)
 };
 
 export type PlayerSave = {

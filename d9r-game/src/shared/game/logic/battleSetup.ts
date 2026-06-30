@@ -14,7 +14,7 @@ import {
 } from '../data/raidBosses';
 import {
   getHeroProgress,
-  getLootDamageBonus,
+  getLootStatBonuses,
   getPartyPower,
   getScaledStats,
 } from './progression';
@@ -26,6 +26,8 @@ export type CreateBattleStateOptions = {
   bossId?: string;
   encounterIndex?: number;
   encounterCount?: number;
+  // Heroes from the previous encounter whose HP should be carried into the next battle
+  carryHeroes?: import('../types').BattleHero[];
 };
 
 const buildBattleHero = (
@@ -38,8 +40,9 @@ const buildBattleHero = (
 
   const progress = getHeroProgress(save, heroId);
   const stats = getScaledStats(template, progress.level);
-  const lootDamageBonus = getLootDamageBonus(save, heroId);
+  const lb = getLootStatBonuses(save, heroId);
   const skillOptions = getHeroSkillChoicesForLevel(template, progress.level);
+  const maxHp = stats.hp + (lb.hp ?? 0);
 
   return {
     id: template.id,
@@ -50,13 +53,13 @@ const buildBattleHero = (
     icon: template.icon,
     spriteFrame: template.spriteFrame,
     level: progress.level,
-    maxHp: stats.hp,
-    hp: stats.hp,
-    atk: stats.atk + lootDamageBonus,
-    def: stats.def,
-    mag: stats.mag + lootDamageBonus,
-    res: stats.res,
-    spd: stats.spd,
+    maxHp,
+    hp: maxHp,
+    atk: stats.atk + (lb.atk ?? 0),
+    def: stats.def + (lb.def ?? 0),
+    mag: stats.mag + (lb.mag ?? 0),
+    res: stats.res + (lb.res ?? 0),
+    spd: stats.spd + (lb.spd ?? 0),
     charge: 0,
     skillCooldown: 0,
     skill: skillOptions[0] ?? getHeroSkillForLevel(template, progress.level),
@@ -214,10 +217,17 @@ export const createBattleState = (
   options: CreateBattleStateOptions = {}
 ): BattleState => {
   const partyIds = save.party.length > 0 ? save.party : STARTER_PARTY;
+  const carryHpById = new Map((options.carryHeroes ?? []).map((h) => [h.id, h.hp]));
   const heroes = partyIds
     .map((heroId) => buildBattleHero(save, heroId))
     .filter((hero): hero is BattleHero => hero !== null)
-    .sort((firstHero, secondHero) => secondHero.spd - firstHero.spd);
+    .sort((firstHero, secondHero) => secondHero.spd - firstHero.spd)
+    .map((hero) => {
+      const carriedHp = carryHpById.get(hero.id);
+      return carriedHp !== undefined
+        ? { ...hero, hp: Math.max(0, Math.min(carriedHp, hero.maxHp)) }
+        : hero;
+    });
 
   const { boss, bossList } = createRaidBoss(save, options);
 

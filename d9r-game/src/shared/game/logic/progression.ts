@@ -162,17 +162,31 @@ export const getScaledStats = (
   };
 };
 
-// With heroId: returns only equipped-loot bonus for that hero.
-// Without heroId (or no equippedLoot yet): returns total inventory bonus (legacy).
-export const getLootDamageBonus = (save: PlayerSave, heroId?: string): number => {
-  if (!heroId || !save.equippedLoot) {
-    return save.inventory.reduce((total, item) => total + item.bonus, 0);
+// Returns the aggregate stat bonuses from equipped loot for one hero,
+// respecting each item's primary stat and any extraStats it carries.
+export const getLootStatBonuses = (save: PlayerSave, heroId?: string): Partial<StatBlock> => {
+  const items = (() => {
+    if (!heroId || !save.equippedLoot) return save.inventory;
+    const ids = new Set(save.equippedLoot[heroId] ?? []);
+    return ids.size === 0 ? [] : save.inventory.filter((i) => ids.has(i.id));
+  })();
+
+  const out: Partial<StatBlock> = {};
+  for (const item of items) {
+    out[item.stat] = (out[item.stat] ?? 0) + item.bonus;
+    if (item.extraStats) {
+      for (const [s, v] of Object.entries(item.extraStats) as [keyof StatBlock, number][]) {
+        out[s] = (out[s] ?? 0) + v;
+      }
+    }
   }
-  const equippedIds = new Set(save.equippedLoot[heroId] ?? []);
-  if (equippedIds.size === 0) return 0;
-  return save.inventory
-    .filter(item => equippedIds.has(item.id))
-    .reduce((total, item) => total + item.bonus, 0);
+  return out;
+};
+
+// Legacy scalar helper — kept for callers that only care about atk/mag sum.
+export const getLootDamageBonus = (save: PlayerSave, heroId?: string): number => {
+  const b = getLootStatBonuses(save, heroId);
+  return (b.atk ?? 0) + (b.mag ?? 0);
 };
 
 export const getEquippedHeroId = (save: PlayerSave, itemId: string): string | null => {
@@ -474,7 +488,7 @@ export const upgradeLootWithToken = (save: PlayerSave, itemId: string) => {
       updatedAt: new Date().toISOString(),
     },
     upgraded: true,
-    message: `${item.name} upgraded to +${nextLevel} (DMG +${item.bonus + 10})`,
+    message: `${item.name} upgraded to +${nextLevel} (${item.stat.toUpperCase()} +${item.bonus + 10})`,
   };
 };
 
@@ -511,16 +525,14 @@ export const getPartyPower = (save: PlayerSave) =>
 
     const progress = getHeroProgress(save, heroId);
     const stats = getScaledStats(template, progress.level);
-    const lootDamageBonus = getLootDamageBonus(save, heroId);
+    const lb = getLootStatBonuses(save, heroId);
 
     return (
       total +
-      stats.hp * 0.08 +
-      stats.atk +
-      lootDamageBonus +
-      stats.def +
-      stats.mag +
-      lootDamageBonus +
-      stats.res
+      (stats.hp  + (lb.hp  ?? 0)) * 0.08 +
+      (stats.atk + (lb.atk ?? 0)) +
+      (stats.def + (lb.def ?? 0)) +
+      (stats.mag + (lb.mag ?? 0)) +
+      (stats.res + (lb.res ?? 0))
     );
   }, 0);

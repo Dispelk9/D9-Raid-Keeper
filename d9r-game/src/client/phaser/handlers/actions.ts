@@ -55,6 +55,7 @@ function handleBattleEnd(
       bossId: node.bossId,
       encounterIndex: nextIdx,
       encounterCount: run.battleCount,
+      carryHeroes: nextBattle.heroes, // preserve HP from the previous encounter
     });
 
     const triggerTransition = () => {
