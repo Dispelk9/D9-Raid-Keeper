@@ -257,7 +257,7 @@ export function handleAction(
   }
 
   // ── Deferred boss attacks (waits for hero effects to finish) ──────────
-  const fireBossAttacks = () => {
+  const fireBossAttacks = (onAllDone?: () => void) => {
     healingFloats.forEach(({ index, value, kind }) => spawnFloat(scene, index, value, kind));
 
     scene.time.delayedCall(bossAttackDelay, () => {
@@ -269,6 +269,7 @@ export function handleAction(
           if (slot) spawnEffectSequence(scene, getBossStrikeSeq(0), slot.iconCX, slot.iconCY, 112);
           animateHeroHit(scene, index, heroId, ko);
         });
+        onAllDone?.();
       });
     });
   };
@@ -305,7 +306,9 @@ export function handleAction(
       });
     }
   } else {
-    handleBattleEnd(scene, nextBattle);
+    // Loss: let boss attacks animate first, then show defeat modal
+    fireBossAttacks(() => scene.time.delayedCall(500, () => handleBattleEnd(scene, nextBattle)));
+    return;
   }
   fireBossAttacks();
 }
@@ -437,11 +440,7 @@ export function handleHeroAction(
   scene.battle = { ...afterBoss, logs: logsWithoutBossAttacks };
   scene.refreshRaid();
 
-  if (afterBoss.status === 'lost') {
-    handleBattleEnd(scene, afterBoss);
-  }
-
-  // Play boss attack animations after delay
+  // Play boss attack animations after delay; defeat modal only shown after all anims settle
   scene.time.delayedCall(bossDelay, () => {
     playBossAttackCues(scene, bossAttackCues, damagedHeroSlots, heroIndexMap, newBossLogEntries, (handledIds) => {
       damagedHeroSlots.forEach(({ index, heroId, value, ko }) => {
@@ -451,6 +450,9 @@ export function handleHeroAction(
         if (slot) spawnEffectSequence(scene, getBossStrikeSeq(0), slot.iconCX, slot.iconCY, 112);
         animateHeroHit(scene, index, heroId, ko);
       });
+      if (afterBoss.status === 'lost') {
+        scene.time.delayedCall(500, () => handleBattleEnd(scene, afterBoss));
+      }
     });
   });
 }
